@@ -26,7 +26,6 @@ MANAGER_TOPIC = "camera/manager/set_mode"
 # 云台发布自身运行模式的主题 (云台 -> 服务器) 
 TRACKING_STATUS_TOPIC = "camera/tracking/set_mode"
 
-# 注意：原AUTO_PROCESS_CONTROL_TOPIC现在作为状态发布主题使用
 # 为了保持向后兼容，我们仍然可以接收这个主题的控制指令
 AUTO_PROCESS_CONTROL_TOPIC = "camera/tracking/set_mode"
 
@@ -37,7 +36,7 @@ current_mode = "idle"  # 当前模式: idle, auto, manual
 auto_process = None    # 存放自动进程的Popen对象
 manual_process = None  # 存放手动进程的Popen对象
 
-# ===== 新增的云台状态变量 =====
+# 云台状态变量
 gimbal_status = {
     "pan": 0.0,      # 云台水平角度 (-180 到 180)
     "tilt": 0.0,     # 云台俯仰角度 (-90 到 90)
@@ -113,7 +112,7 @@ def stop_manual_process():
     # 更新云台状态
     update_gimbal_status(mode="idle")
 
-# ===== 新增的云台控制和状态功能 =====
+# ===== 云台控制和状态功能 =====
 
 def update_gimbal_status(**kwargs):
     """更新云台状态"""
@@ -123,8 +122,31 @@ def update_gimbal_status(**kwargs):
             gimbal_status[key] = value
             print(f"[云台状态]: {key} 更新为 {value}")
 
+def handle_mode_switch(target_mode):
+    """处理模式切换指令"""
+    global current_mode
+    
+    if target_mode == "manual":
+        if current_mode != "manual":
+            print("[管理器]: 正在切换到手动模式...")
+            stop_auto_process()  # 先暂停自动进程
+            start_manual_process() # 再启动手动进程
+            print("[管理器]: 已切换到手动模式。")
+        else:
+            print("[管理器]: 已处于手动模式，无需切换。")
+    elif target_mode == "auto":
+        if current_mode != "auto":
+            print("[管理器]: 正在切换到自动模式...")
+            stop_manual_process() # 先停止手动进程
+            start_auto_process()  # 再恢复自动进程
+            print("[管理器]: 已切换到自动模式。")
+        else:
+            print("[管理器]: 已处于自动模式，无需切换。")
+    else:
+        print(f"[管理器]: 未知的模式指令: {target_mode}")
+
 def handle_gimbal_control(command_data):
-    """处理服务器发送的云台控制指令"""
+    """处理云台控制指令"""
     try:
         print(f"[云台控制]: 收到控制指令 -> {command_data}")
         
@@ -195,24 +217,50 @@ def handle_gimbal_control(command_data):
     except Exception as e:
         print(f"[云台控制]: 处理控制指令时出错: {e}")
 
-def publish_gimbal_status():
-    """定期发布云台状态"""
+def handle_manager_command(command_data):
+    """处理服务器发送的管理指令（模式切换 + 云台控制）"""
+    try:
+        print(f"[管理器]: 收到指令 -> {command_data}")
+        
+        # 检查是否是模式切换指令
+        if "mode" in command_data:
+            target_mode = command_data.get("mode")
+            if target_mode in ["manual", "auto"]:
+                handle_mode_switch(target_mode)
+                return
+        
+        # 检查是否是云台控制指令
+        if "command" in command_data:
+            handle_gimbal_control(command_data)
+            return
+            
+        # 如果既不是模式切换也不是云台控制，则报告未知指令
+        print(f"[管理器]: 未知的指令格式: {command_data}")
+        
+    except Exception as e:
+        print(f"[管理器]: 处理指令时出错: {e}")
+
+def publish_tracking_status():
+    """定期发布云台运行模式状态"""
     global stop_status_publish
     while not stop_status_publish:
         try:
-            # 添加时间戳
-            status_with_timestamp = gimbal_status.copy()
-            status_with_timestamp["timestamp"] = int(time.time() * 1000)  # 毫秒时间戳
+            # 构造状态数据（包含模式和云台状态）
+            status_data = {
+                "mode": current_mode,  # 当前运行模式
+                "gimbal": gimbal_status.copy(),  # 云台状态
+                "timestamp": int(time.time() * 1000)  # 毫秒时间戳
+            }
             
             # 发布状态
-            status_json = json.dumps(status_with_timestamp)
-            mqtt_client.publish(GIMBAL_STATUS_TOPIC, status_json, qos=1)
+            status_json = json.dumps(status_data)
+            mqtt_client.publish(TRACKING_STATUS_TOPIC, status_json, qos=1)
             
             # 每秒发布一次状态
             time.sleep(1)
             
         except Exception as e:
-            print(f"[状态发布]: 发布云台状态时出错: {e}")
+            print(f"[状态发布]: 发布运行状态时出错: {e}")
             time.sleep(1)
 
 def start_status_publishing():
@@ -220,28 +268,24 @@ def start_status_publishing():
     global status_publish_thread, stop_status_publish
     if status_publish_thread is None or not status_publish_thread.is_alive():
         stop_status_publish = False
-        status_publish_thread = threading.Thread(target=publish_gimbal_status, daemon=True)
+        status_publish_thread = threading.Thread(target=publish_tracking_status, daemon=True)
         status_publish_thread.start()
-        print("[状态发布]: 云台状态发布线程已启动")
+        print("[状态发布]: 运行状态发布线程已启动")
 
 def stop_status_publishing():
     """停止状态发布线程"""
     global stop_status_publish
     stop_status_publish = True
-    print("[状态发布]: 云台状态发布线程已停止")
+    print("[状态发布]: 运行状态发布线程已停止")
 
 # MQTT回调函数
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"[管理器]: 成功连接到MQTT服务器。")
         
-        # 订阅原有主题
+        # 订阅管理主题（接收模式切换和云台控制指令）
         client.subscribe(MANAGER_TOPIC)
         print(f"[管理器]: 已订阅管理主题: {MANAGER_TOPIC}")
-        
-        # 订阅新增的云台控制主题
-        client.subscribe(GIMBAL_CONTROL_TOPIC)
-        print(f"[管理器]: 已订阅云台控制主题: {GIMBAL_CONTROL_TOPIC}")
         
         # 启动状态发布
         start_status_publishing()
@@ -251,8 +295,6 @@ def on_connect(client, userdata, flags, rc):
 
 def on_message(client, userdata, msg):
     """处理MQTT消息"""
-    global current_mode
-    
     topic = msg.topic
     payload_str = msg.payload.decode('utf-8')
     print(f"\n[MQTT消息]: 主题: {topic}, 内容: {payload_str}")
@@ -261,30 +303,8 @@ def on_message(client, userdata, msg):
         data = json.loads(payload_str)
         
         if topic == MANAGER_TOPIC:
-            # 原有的模式切换逻辑
-            target_mode = data.get("mode")
-            if target_mode == "manual":
-                if current_mode != "manual":
-                    print("[管理器]: 正在切换到手动模式...")
-                    stop_auto_process()  # 先暂停自动进程
-                    start_manual_process() # 再启动手动进程
-                    print("[管理器]: 已切换到手动模式。")
-                else:
-                    print("[管理器]: 已处于手动模式，无需切换。")
-            elif target_mode == "auto":
-                if current_mode != "auto":
-                    print("[管理器]: 正在切换到自动模式...")
-                    stop_manual_process() # 先停止手动进程
-                    start_auto_process()  # 再恢复自动进程
-                    print("[管理器]: 已切换到自动模式。")
-                else:
-                    print("[管理器]: 已处于自动模式，无需切换。")
-            else:
-                print(f"[管理器]: 未知的模式指令: {target_mode}")
-                
-        elif topic == GIMBAL_CONTROL_TOPIC:
-            # 新增的云台控制逻辑
-            handle_gimbal_control(data)
+            # 处理管理指令（模式切换 + 云台控制）
+            handle_manager_command(data)
             
     except Exception as e:
         print(f"[MQTT消息]: 处理消息时出错: {e}")
