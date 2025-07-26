@@ -428,6 +428,37 @@ class MQTTService:
                 if current_position:
                     self.gimbal_devices[client_id]['current_position'] = current_position
                 
+                # 更新统计信息
+                if 'stats' in msg_data:
+                    self.gimbal_devices[client_id]['stats'] = msg_data['stats']
+                
+                # 更新设备信息中的当前位置
+                if 'device_info' in self.gimbal_devices[client_id]:
+                    if current_position:
+                        self.gimbal_devices[client_id]['device_info']['current_position'] = current_position
+            else:
+                # 如果设备不存在但发送了状态，创建一个简单的设备记录
+                gimbal_info = {
+                    'client_id': client_id,
+                    'username': '云台',
+                    'device_type': 'gimbal',
+                    'device_info': {
+                        'model': 'Unknown Gimbal',
+                        'current_position': current_position,
+                        'position_limits': {},
+                        'capabilities': []
+                    },
+                    'register_time': datetime.now(),
+                    'last_seen': datetime.now(),
+                    'is_online': (status == 'online'),
+                    'stats': msg_data.get('stats', {})
+                }
+                
+                self.gimbal_devices[client_id] = gimbal_info
+                self.stats['gimbal_devices_count'] = len(self.gimbal_devices)
+                
+                logger.info(f"创建新的云台设备记录: {client_id}")
+                
                 # 更新全局状态
                 self.is_gimbal_online = any(
                     device['is_online'] for device in self.gimbal_devices.values()
@@ -718,6 +749,90 @@ class MQTTService:
         except Exception as e:
             logger.error(f"发送云台控制指令异常: {e}")
             return False
+    
+    def get_gimbal_status(self) -> list:
+        """
+        获取所有已连接云台设备的状态信息
+        
+        Returns:
+            云台状态信息列表
+        """
+        try:
+            gimbal_status_list = []
+            
+            for client_id, gimbal_info in self.gimbal_devices.items():
+                # 基础状态信息
+                status_info = {
+                    'client_id': client_id,
+                    'username': gimbal_info.get('username', '云台'),
+                    'device_type': gimbal_info.get('device_type', 'gimbal'),
+                    'status': 'online' if gimbal_info.get('is_online', False) else 'offline',
+                    'last_seen': gimbal_info.get('last_seen'),
+                    'register_time': gimbal_info.get('register_time')
+                }
+                
+                # 设备详细信息
+                if 'device_info' in gimbal_info:
+                    device_info = gimbal_info['device_info']
+                    status_info.update({
+                        'model': device_info.get('model', 'Unknown'),
+                        'current_position': device_info.get('current_position', {'x': 0, 'y': 0}),
+                        'position_limits': device_info.get('position_limits', {}),
+                        'capabilities': device_info.get('capabilities', [])
+                    })
+                
+                # 运行统计信息
+                if 'stats' in gimbal_info:
+                    status_info['stats'] = gimbal_info['stats']
+                
+                gimbal_status_list.append(status_info)
+            
+            logger.debug(f"获取到 {len(gimbal_status_list)} 个云台设备状态")
+            return gimbal_status_list
+            
+        except Exception as e:
+            logger.error(f"获取云台状态异常: {e}")
+            return []
+    
+    def get_gimbal_devices(self) -> list:
+        """
+        获取所有已注册的云台设备信息
+        
+        Returns:
+            云台设备信息列表
+        """
+        try:
+            device_list = []
+            
+            for client_id, gimbal_info in self.gimbal_devices.items():
+                # 基础设备信息
+                device_info = {
+                    'client_id': client_id,
+                    'username': gimbal_info.get('username', '云台'),
+                    'device_type': gimbal_info.get('device_type', 'gimbal'),
+                    'is_online': gimbal_info.get('is_online', False),
+                    'register_time': gimbal_info.get('register_time'),
+                    'last_seen': gimbal_info.get('last_seen')
+                }
+                
+                # 设备详细信息
+                if 'device_info' in gimbal_info:
+                    device_detail = gimbal_info['device_info']
+                    device_info.update({
+                        'model': device_detail.get('model', 'Unknown'),
+                        'position_limits': device_detail.get('position_limits', {}),
+                        'capabilities': device_detail.get('capabilities', []),
+                        'current_position': device_detail.get('current_position', {'x': 0, 'y': 0})
+                    })
+                
+                device_list.append(device_info)
+            
+            logger.debug(f"获取到 {len(device_list)} 个云台设备")
+            return device_list
+            
+        except Exception as e:
+            logger.error(f"获取云台设备列表异常: {e}")
+            return []
 
 
 # 全局MQTT服务实例

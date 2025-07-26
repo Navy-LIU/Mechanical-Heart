@@ -33,7 +33,7 @@ class GimbalDeviceSimulator:
     """云台设备模拟器"""
     
     def __init__(self, broker_host: str = "localhost", broker_port: int = 1883, 
-                 device_id: str = None):
+                 device_id: str = None, username: str = None, password: str = None):
         """
         初始化云台设备模拟器
         
@@ -47,6 +47,10 @@ class GimbalDeviceSimulator:
         # 如果没有提供device_id，生成唯一ID避免客户端冲突
         self.device_id = device_id if device_id else f"gimbal_{int(time.time())}"
         self.username = "云台"  # 固定用户名
+        
+        # MQTT身份验证参数
+        self.mqtt_username = username
+        self.mqtt_password = password
         
         # MQTT客户端配置
         self.client = mqtt.Client(client_id=self.device_id)
@@ -98,6 +102,12 @@ class GimbalDeviceSimulator:
                 return True
             
             logger.info(f"连接到MQTT代理: {self.broker_host}:{self.broker_port}")
+            
+            # 设置MQTT身份验证
+            if self.mqtt_username:
+                logger.info(f"使用身份验证: {self.mqtt_username}")
+                self.client.username_pw_set(self.mqtt_username, self.mqtt_password)
+            
             self.client.connect(self.broker_host, self.broker_port, 60)
             
             # 启动网络循环
@@ -456,6 +466,8 @@ def main():
     parser.add_argument('--host', default='localhost', help='MQTT代理服务器地址')
     parser.add_argument('--port', type=int, default=1883, help='MQTT代理服务器端口')
     parser.add_argument('--device-id', default=None, help='设备唯一标识符（留空则自动生成）')
+    parser.add_argument('--username', default=None, help='MQTT用户名')
+    parser.add_argument('--password', default=None, help='MQTT密码')
     parser.add_argument('--log-level', default='INFO', 
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        help='日志级别')

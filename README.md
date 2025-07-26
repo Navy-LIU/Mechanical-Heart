@@ -10,6 +10,9 @@
 - 👥 在线用户列表
 - 📱 响应式设计
 - 🔒 安全的API密钥管理
+- 🎥 云台设备控制集成
+- 📡 MQTT通信支持
+- 🔌 HTTP API接口
 
 ## 技术栈
 
@@ -17,6 +20,8 @@
 - **前端**: HTML5 + CSS3 + JavaScript
 - **实时通信**: WebSocket (Socket.IO)
 - **AI集成**: 月之暗面API (OpenAI兼容)
+- **MQTT**: 支持MQTT通信协议
+- **设备控制**: 云台设备集成
 
 ## 快速开始
 
@@ -53,7 +58,45 @@ python app.py
 1. 打开网站，输入昵称加入聊天室
 2. 在聊天框中输入消息与其他用户交流
 3. 使用 `@AI` 来与AI助手对话
-4. 查看右侧用户列表了解在线用户
+4. 使用 `@云台 Ang_x=2500 Ang_Y=2000` 命令控制云台设备
+5. 查看右侧用户列表了解在线用户
+
+## 云台控制功能
+
+本项目支持通过MQTT协议控制云台设备，提供两种控制方式：
+
+### 1. 聊天室控制
+
+在聊天室中使用以下命令格式：
+```
+@云台 Ang_x=2500 Ang_Y=2000
+```
+
+### 2. HTTP API控制
+
+直接通过HTTP API接口控制：
+
+```bash
+# 云台控制
+curl -X POST -H "Content-Type: application/json" \
+     -d '{"x": 2500, "y": 2000, "username": "用户名"}' \
+     http://localhost:5000/api/gimbal/control
+
+# 查询状态
+curl http://localhost:5000/api/gimbal/status
+
+# 设备列表
+curl http://localhost:5000/api/gimbal/list
+```
+
+### 云台设备启动
+
+```bash
+# 启动云台设备模拟器
+python3 gimbal_device_simulator.py --host 127.0.0.1 --port 1883
+```
+
+详细使用说明请查看：[**云台HTTP控制API使用指南**](云台HTTP控制API使用指南.md)
 
 ## 项目结构
 

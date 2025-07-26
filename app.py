@@ -266,6 +266,155 @@ def mqtt_status():
             'error': f'获取MQTT状态失败: {str(e)}'
         }, 500
 
+@app.route('/api/gimbal/control', methods=['POST'])
+def gimbal_control_api():
+    """
+    云台控制API端点
+    接受JSON数据: {"x": 2500, "y": 2000, "username": "API用户"}
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return {
+                'success': False,
+                'error': '请提供JSON数据'
+            }, 400
+        
+        x = data.get('x')
+        y = data.get('y')
+        username = data.get('username', 'API_User')
+        
+        # 参数验证
+        if x is None or y is None:
+            return {
+                'success': False,
+                'error': '缺少必需参数: x 和 y'
+            }, 400
+        
+        try:
+            x = int(x)
+            y = int(y)
+        except (ValueError, TypeError):
+            return {
+                'success': False,
+                'error': '参数 x 和 y 必须是整数'
+            }, 400
+        
+        # 验证参数范围
+        if not (1024 <= x <= 3048):
+            return {
+                'success': False,
+                'error': f'参数 x 超出范围: {x}，应在1024-3048之间'
+            }, 400
+        
+        if not (1850 <= y <= 2400):
+            return {
+                'success': False,
+                'error': f'参数 y 超出范围: {y}，应在1850-2400之间'
+            }, 400
+        
+        # 获取MQTT服务并发送控制指令
+        mqtt_service = get_mqtt_service()
+        if not mqtt_service or not mqtt_service.is_connected:
+            return {
+                'success': False,
+                'error': 'MQTT服务不可用'
+            }, 503
+        
+        success = mqtt_service.send_gimbal_command_from_chat(x, y, username)
+        
+        if success:
+            return {
+                'success': True,
+                'message': f'云台控制指令已发送: X={x}, Y={y}',
+                'control_data': {
+                    'x': x,
+                    'y': y,
+                    'username': username,
+                    'timestamp': datetime.now().isoformat()
+                }
+            }
+        else:
+            return {
+                'success': False,
+                'error': '发送云台控制指令失败'
+            }, 500
+            
+    except Exception as e:
+        logger.error(f"云台控制API异常: {e}")
+        return {
+            'success': False,
+            'error': f'服务器错误: {str(e)}'
+        }, 500
+
+@app.route('/api/gimbal/status')
+def gimbal_status_api():
+    """
+    获取云台状态API端点
+    返回所有已连接云台设备的状态信息
+    """
+    try:
+        mqtt_service = get_mqtt_service()
+        if not mqtt_service or not mqtt_service.is_connected:
+            return {
+                'success': False,
+                'error': 'MQTT服务不可用',
+                'gimbals': []
+            }, 503
+        
+        # 获取云台状态信息
+        gimbal_status = mqtt_service.get_gimbal_status()
+        
+        return {
+            'success': True,
+            'message': '云台状态获取成功',
+            'gimbals': gimbal_status,
+            'total_count': len(gimbal_status),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"云台状态API异常: {e}")
+        return {
+            'success': False,
+            'error': f'服务器错误: {str(e)}',
+            'gimbals': []
+        }, 500
+
+@app.route('/api/gimbal/list')
+def gimbal_list_api():
+    """
+    获取云台设备列表API端点
+    返回所有已注册的云台设备信息
+    """
+    try:
+        mqtt_service = get_mqtt_service()
+        if not mqtt_service or not mqtt_service.is_connected:
+            return {
+                'success': False,
+                'error': 'MQTT服务不可用',
+                'devices': []
+            }, 503
+        
+        # 获取云台设备列表
+        gimbal_devices = mqtt_service.get_gimbal_devices()
+        
+        return {
+            'success': True,
+            'message': '云台设备列表获取成功',
+            'devices': gimbal_devices,
+            'total_count': len(gimbal_devices),
+            'timestamp': datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"云台设备列表API异常: {e}")
+        return {
+            'success': False,
+            'error': f'服务器错误: {str(e)}',
+            'devices': []
+        }, 500
+
 @app.route('/api/docs')
 def api_docs():
     """
@@ -305,6 +454,30 @@ API文档
                 'method': 'GET',
                 'url': '/health',
                 'description': '服务健康检查'
+            },
+            'gimbal_control': {
+                'method': 'POST',
+                'url': '/api/gimbal/control',
+                'description': '云台控制API',
+                'content_type': 'application/json',
+                'body': {
+                    'x': '水平角度（必需，范围: 1024-3048）',
+                    'y': '垂直角度（必需，范围: 1850-2400）',
+                    'username': '操作用户（可选，默认: API_User）'
+                },
+                'example': '{"x": 2500, "y": 2000, "username": "测试用户"}'
+            },
+            'gimbal_status': {
+                'method': 'GET',
+                'url': '/api/gimbal/status',
+                'description': '获取云台状态信息',
+                'returns': '返回所有已连接云台设备的状态'
+            },
+            'gimbal_list': {
+                'method': 'GET',
+                'url': '/api/gimbal/list',
+                'description': '获取云台设备列表',
+                'returns': '返回所有已注册的云台设备信息'
             }
         },
         'mqtt_info': {
