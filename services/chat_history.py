@@ -542,6 +542,8 @@ class ChatHistory:
                 stats = cursor.fetchone()
                 
                 if stats:
+                    # 将Row对象转换为字典
+                    stats = dict(stats)
                     # 更新现有记录
                     updates = {
                         'total_messages': stats['total_messages'] + 1

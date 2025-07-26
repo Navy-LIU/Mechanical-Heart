@@ -296,7 +296,8 @@ if __name__ == '__main__':
             host=host, 
             port=port,
             use_reloader=debug_mode,
-            log_output=debug_mode
+            log_output=debug_mode,
+            allow_unsafe_werkzeug=True
         )
     except KeyboardInterrupt:
         logger.info("服务器已停止")
