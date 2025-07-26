@@ -12,6 +12,7 @@ from collections import deque
 from models.user import User, create_user
 from models.chat_room import get_chat_room
 from models.message import create_system_message
+from services.chat_history import get_chat_history
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -85,6 +86,87 @@ class UserManager:
         """获取指定IP下的所有用户"""
         return self._ip_users.get(ip_address, [])
     
+    def get_suggested_username_for_ip(self, ip_address: str) -> Optional[str]:
+        """
+        为指定IP地址获取建议的用户名（最近使用的可用用户名）
+        
+        Args:
+            ip_address: IP地址
+            
+        Returns:
+            建议的用户名，如果没有则返回None
+        """
+        if not ip_address:
+            return None
+            
+        try:
+            chat_history = get_chat_history()
+            # 获取该IP最近使用的用户名列表
+            recent_usernames = chat_history.get_recent_usernames_for_ip(ip_address, limit=10)
+            
+            # 找到第一个当前未被占用的用户名
+            for username in recent_usernames:
+                if not self.is_username_taken(username):
+                    logger.info(f"为IP {ip_address} 找到建议用户名: {username}")
+                    return username
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"获取IP建议用户名失败: {e}")
+            return None
+    
+    def get_username_suggestions_for_ip(self, ip_address: str, limit: int = 3) -> Dict[str, Any]:
+        """
+        为指定IP地址获取用户名建议列表
+        
+        Args:
+            ip_address: IP地址
+            limit: 返回建议数量限制
+            
+        Returns:
+            包含建议用户名信息的字典
+        """
+        result = {
+            'has_history': False,
+            'suggested_username': None,
+            'recent_usernames': [],
+            'available_usernames': []
+        }
+        
+        if not ip_address:
+            return result
+            
+        try:
+            chat_history = get_chat_history()
+            # 获取该IP最近使用的用户名列表
+            recent_usernames = chat_history.get_recent_usernames_for_ip(ip_address, limit=limit * 2)
+            
+            if recent_usernames:
+                result['has_history'] = True
+                result['recent_usernames'] = recent_usernames
+                
+                # 找到当前可用的用户名
+                available_usernames = []
+                for username in recent_usernames:
+                    if not self.is_username_taken(username):
+                        available_usernames.append(username)
+                        if len(available_usernames) >= limit:
+                            break
+                
+                result['available_usernames'] = available_usernames
+                
+                # 设置首选建议用户名
+                if available_usernames:
+                    result['suggested_username'] = available_usernames[0]
+                    logger.info(f"为IP {ip_address} 提供用户名建议: {available_usernames}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取IP用户名建议失败: {e}")
+            return result
+    
     def add_user(self, session_id: str, username: str, socket_id: str = None, 
                  ip_address: str = None, display_name: str = None) -> Tuple[bool, str, Optional[User]]:
         """
@@ -143,6 +225,15 @@ class UserManager:
                 
                 # 添加到IP映射
                 self.add_user_to_ip_mapping(user)
+                
+                # 记录IP-用户名关联到数据库
+                if ip_address and username:
+                    try:
+                        chat_history = get_chat_history()
+                        chat_history.record_ip_username_usage(ip_address, username)
+                        logger.debug(f"IP-用户名关联已记录: {ip_address} -> {username}")
+                    except Exception as e:
+                        logger.error(f"记录IP-用户名关联失败: {e}")
                 
                 # 添加到用户历史
                 self._user_history.append({

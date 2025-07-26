@@ -611,6 +611,35 @@ def handle_get_user_info():
         logger.error(f"获取用户信息异常: {request.sid}, {e}")
         emit('user_info_error', {'error': '获取用户信息失败'})
 
+@socketio.on('get_username_suggestions')
+def handle_get_username_suggestions():
+    """获取用户名建议（针对重复访问IP）"""
+    try:
+        result = websocket_handler.handle_get_username_suggestions(request.sid)
+        
+        if result['success']:
+            emit('username_suggestions', {
+                'success': True,
+                'data': result,
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            emit('username_suggestions_error', {
+                'success': False,
+                'error': result['error'],
+                'timestamp': datetime.now().isoformat()
+            })
+        
+        logger.info(f"用户名建议请求处理完成: {request.sid}")
+        
+    except Exception as e:
+        logger.error(f"获取用户名建议异常: {request.sid}, {e}")
+        emit('username_suggestions_error', {
+            'success': False,
+            'error': '获取用户名建议失败',
+            'timestamp': datetime.now().isoformat()
+        })
+
 @socketio.on_error_default
 def default_error_handler(e):
     """默认错误处理器"""

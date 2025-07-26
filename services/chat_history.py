@@ -64,13 +64,40 @@ class ChatHistory:
                         join_time DATETIME NOT NULL,
                         leave_time DATETIME,
                         message_count INTEGER DEFAULT 0,
+                        ip_address TEXT,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
                 ''')
                 
+                # 添加ip_address列到已存在的user_sessions表（如果不存在）
+                cursor.execute("PRAGMA table_info(user_sessions)")
+                columns = [column[1] for column in cursor.fetchall()]
+                if 'ip_address' not in columns:
+                    cursor.execute('ALTER TABLE user_sessions ADD COLUMN ip_address TEXT')
+                    logger.info("数据库迁移: 已在user_sessions表中添加ip_address列")
+                
                 # 创建用户会话表索引
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions_username ON user_sessions(username)')
                 cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions_join_time ON user_sessions(join_time)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_user_sessions_ip_address ON user_sessions(ip_address)')
+                
+                # 创建IP-用户名映射表
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS ip_username_history (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        ip_address TEXT NOT NULL,
+                        username TEXT NOT NULL,
+                        first_used DATETIME NOT NULL,
+                        last_used DATETIME NOT NULL,
+                        usage_count INTEGER DEFAULT 1,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(ip_address, username)
+                    )
+                ''')
+                
+                # 创建IP-用户名映射表索引
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_username_ip ON ip_username_history(ip_address)')
+                cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_username_last_used ON ip_username_history(ip_address, last_used)')
                 
                 # 创建聊天统计表
                 cursor.execute('''
@@ -598,6 +625,141 @@ class ChatHistory:
         """关闭数据库连接（清理资源）"""
         # SQLite连接在上下文管理器中自动关闭，这里主要用于日志
         logger.info("聊天历史管理器已关闭")
+    
+    def record_ip_username_usage(self, ip_address: str, username: str) -> bool:
+        """
+        记录IP地址和用户名的使用关联
+        
+        Args:
+            ip_address: IP地址
+            username: 用户名
+            
+        Returns:
+            是否记录成功
+        """
+        if not ip_address or not username:
+            return False
+            
+        try:
+            with self._lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    now = datetime.now()
+                    
+                    # 尝试插入或更新记录
+                    cursor.execute('''
+                        INSERT INTO ip_username_history 
+                        (ip_address, username, first_used, last_used, usage_count)
+                        VALUES (?, ?, ?, ?, 1)
+                        ON CONFLICT(ip_address, username) DO UPDATE SET
+                        last_used = ?,
+                        usage_count = usage_count + 1
+                    ''', (ip_address, username, now.isoformat(), now.isoformat(), now.isoformat()))
+                    
+                    conn.commit()
+                    logger.debug(f"IP-用户名关联已记录: {ip_address} -> {username}")
+                    return True
+                    
+        except Exception as e:
+            logger.error(f"记录IP-用户名关联失败: {e}")
+            return False
+    
+    def get_recent_usernames_for_ip(self, ip_address: str, limit: int = 5) -> List[str]:
+        """
+        获取指定IP地址最近使用的用户名列表
+        
+        Args:
+            ip_address: IP地址
+            limit: 返回的最大用户名数量
+            
+        Returns:
+            用户名列表，按最近使用时间排序
+        """
+        if not ip_address:
+            return []
+            
+        try:
+            with self._lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                        SELECT username FROM ip_username_history 
+                        WHERE ip_address = ?
+                        ORDER BY last_used DESC
+                        LIMIT ?
+                    ''', (ip_address, limit))
+                    
+                    results = cursor.fetchall()
+                    return [row[0] for row in results]
+                    
+        except Exception as e:
+            logger.error(f"获取IP的历史用户名失败: {e}")
+            return []
+    
+    def get_most_used_username_for_ip(self, ip_address: str) -> Optional[str]:
+        """
+        获取指定IP地址最常使用的用户名
+        
+        Args:
+            ip_address: IP地址
+            
+        Returns:
+            最常使用的用户名，如果没有则返回None
+        """
+        if not ip_address:
+            return None
+            
+        try:
+            with self._lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                        SELECT username FROM ip_username_history 
+                        WHERE ip_address = ?
+                        ORDER BY usage_count DESC, last_used DESC
+                        LIMIT 1
+                    ''', (ip_address,))
+                    
+                    result = cursor.fetchone()
+                    return result[0] if result else None
+                    
+        except Exception as e:
+            logger.error(f"获取IP最常用的用户名失败: {e}")
+            return None
+    
+    def check_username_used_by_ip(self, ip_address: str, username: str) -> bool:
+        """
+        检查指定IP地址是否曾经使用过该用户名
+        
+        Args:
+            ip_address: IP地址
+            username: 用户名
+            
+        Returns:
+            是否曾经使用过
+        """
+        if not ip_address or not username:
+            return False
+            
+        try:
+            with self._lock:
+                with self._get_connection() as conn:
+                    cursor = conn.cursor()
+                    
+                    cursor.execute('''
+                        SELECT 1 FROM ip_username_history 
+                        WHERE ip_address = ? AND username = ?
+                        LIMIT 1
+                    ''', (ip_address, username))
+                    
+                    result = cursor.fetchone()
+                    return bool(result)
+                    
+        except Exception as e:
+            logger.error(f"检查IP-用户名关联失败: {e}")
+            return False
     
     def __str__(self) -> str:
         """字符串表示"""

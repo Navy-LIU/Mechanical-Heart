@@ -278,6 +278,52 @@ class WebSocketHandler:
                 'error': f"加入聊天室失败: {str(e)}"
             }
     
+    def handle_get_username_suggestions(self, socket_id: str, data: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        处理获取用户名建议请求（针对重复访问IP）
+        
+        Args:
+            socket_id: Socket连接ID
+            data: 请求数据（可选）
+            
+        Returns:
+            用户名建议处理结果
+        """
+        try:
+            # 获取连接信息
+            connection_info = self._connections.get(socket_id, {})
+            ip_address = connection_info.get('client_ip')
+            
+            if not ip_address:
+                return {
+                    'success': False,
+                    'error': '无法获取IP地址信息'
+                }
+            
+            # 获取用户名建议
+            suggestions = self.user_manager.get_username_suggestions_for_ip(ip_address, limit=3)
+            
+            response_data = {
+                'success': True,
+                'ip_address': ip_address,
+                'suggestions': suggestions,
+                'message': '获取用户名建议成功'
+            }
+            
+            # 如果有历史记录，提供更友好的提示
+            if suggestions['has_history'] and suggestions['suggested_username']:
+                response_data['message'] = f'欢迎回来！您之前曾使用过以下用户名'
+            
+            logger.info(f"IP {ip_address} 请求用户名建议: {suggestions}")
+            return response_data
+            
+        except Exception as e:
+            logger.error(f"获取用户名建议失败: {e}")
+            return {
+                'success': False,
+                'error': f'获取用户名建议失败: {str(e)}'
+            }
+    
     def handle_send_message(self, socket_id: str, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         处理发送消息
