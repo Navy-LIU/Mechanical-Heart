@@ -6,7 +6,7 @@
 # 默认配置
 DEFAULT_HOST="localhost"
 DEFAULT_PORT="1883"
-DEFAULT_DEVICE_ID="gimbal_001"
+DEFAULT_DEVICE_ID="gimbal_$(date +%s)"
 DEFAULT_LOG_LEVEL="INFO"
 
 # 颜色输出

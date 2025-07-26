@@ -33,7 +33,7 @@ class GimbalDeviceSimulator:
     """云台设备模拟器"""
     
     def __init__(self, broker_host: str = "localhost", broker_port: int = 1883, 
-                 device_id: str = "gimbal_001"):
+                 device_id: str = None):
         """
         初始化云台设备模拟器
         
@@ -44,7 +44,8 @@ class GimbalDeviceSimulator:
         """
         self.broker_host = broker_host
         self.broker_port = broker_port
-        self.device_id = device_id
+        # 如果没有提供device_id，生成唯一ID避免客户端冲突
+        self.device_id = device_id if device_id else f"gimbal_{int(time.time())}"
         self.username = "云台"  # 固定用户名
         
         # MQTT客户端配置
@@ -125,7 +126,17 @@ class GimbalDeviceSimulator:
                 return False
                 
         except Exception as e:
-            logger.error(f"云台设备启动失败: {e}")
+            error_msg = str(e)
+            if "No route to host" in error_msg or "10061" in error_msg:
+                logger.error(f"云台设备启动失败: MQTT代理无法连接 ({self.broker_host}:{self.broker_port})")
+                logger.error("请检查: 1) MQTT代理是否正在运行 2) 网络连接是否正常 3) IP地址和端口是否正确")
+                if self.broker_host not in ["localhost", "127.0.0.1"]:
+                    logger.info("建议: 在开发环境中使用 'localhost' 或 '127.0.0.1' 作为MQTT代理地址")
+            elif "Connection refused" in error_msg:
+                logger.error(f"云台设备启动失败: MQTT代理拒绝连接 ({self.broker_host}:{self.broker_port})")
+                logger.error("请检查MQTT代理(Mosquitto)是否正在运行且监听此端口")
+            else:
+                logger.error(f"云台设备启动失败: {e}")
             return False
     
     def stop(self):
@@ -174,7 +185,14 @@ class GimbalDeviceSimulator:
     def _on_disconnect(self, client, userdata, rc):
         """MQTT断开连接回调"""
         self.is_connected = False
-        logger.info(f"云台设备MQTT连接断开，代码: {rc}")
+        if rc == 0:
+            logger.info("云台设备MQTT正常断开连接")
+        elif rc == 7:
+            logger.warning(f"云台设备MQTT连接丢失 (错误代码: {rc}) - 可能是客户端ID冲突")
+            if self.is_running:
+                logger.info("正在尝试重新连接...")
+        else:
+            logger.warning(f"云台设备MQTT连接断开，代码: {rc}")
     
     def _on_message(self, client, userdata, message):
         """MQTT消息回调"""
@@ -437,7 +455,7 @@ def main():
     parser = argparse.ArgumentParser(description='云台设备模拟器')
     parser.add_argument('--host', default='localhost', help='MQTT代理服务器地址')
     parser.add_argument('--port', type=int, default=1883, help='MQTT代理服务器端口')
-    parser.add_argument('--device-id', default='gimbal_001', help='设备唯一标识符')
+    parser.add_argument('--device-id', default=None, help='设备唯一标识符（留空则自动生成）')
     parser.add_argument('--log-level', default='INFO', 
                        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],
                        help='日志级别')
