@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI聊天室</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div id="app">
+        <div class="chat-container">
+            <!-- 聊天室标题 -->
+            <header class="chat-header">
+                <h1>AI聊天室</h1>
+                <div class="online-count">在线: <span id="online-count">0</span></div>
+            </header>
+
+            <div class="chat-main">
+                <!-- 用户列表 -->
+                <aside class="user-list">
+                    <h3>在线用户</h3>
+                    <ul id="users"></ul>
+                </aside>
+
+                <!-- 聊天区域 -->
+                <main class="chat-area">
+                    <div id="messages" class="messages"></div>
+                    
+                    <!-- 输入区域 -->
+                    <div class="input-area">
+                        <input type="text" id="message-input" placeholder="输入消息... (使用@AI来与AI对话)" maxlength="1000">
+                        <button id="send-btn">发送</button>
+                    </div>
+                </main>
+            </div>
+        </div>
+
+        <!-- 用户名输入模态框 -->
+        <div id="username-modal" class="modal">
+            <div class="modal-content">
+                <h2>加入聊天室</h2>
+                <input type="text" id="username-input" placeholder="请输入您的昵称" maxlength="20">
+                <button id="join-btn">加入聊天</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Socket.IO客户端库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+</body>
+</html>
