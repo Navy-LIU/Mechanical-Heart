@@ -868,3 +868,151 @@ body {
         font-size: 10px;
     }
 }
+
+/* 云台状态小窗口样式 */
+.gimbal-status-widget {
+    background: #f8f9fa;
+    border: 1px solid #e9ecef;
+    border-radius: 8px;
+    margin-bottom: 15px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.gimbal-status-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+    color: white;
+    cursor: pointer;
+    transition: background 0.2s ease;
+}
+
+.gimbal-status-header:hover {
+    background: linear-gradient(135deg, #5a6268 0%, #343a40 100%);
+}
+
+.gimbal-status-title {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.gimbal-icon {
+    font-size: 16px;
+}
+
+.gimbal-status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+}
+
+.toggle-arrow {
+    font-size: 12px;
+    transition: transform 0.3s ease;
+    user-select: none;
+}
+
+.gimbal-status-details {
+    padding: 15px;
+    background: white;
+    border-top: 1px solid #e9ecef;
+    animation: slideDown 0.3s ease;
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        max-height: 0;
+        padding: 0 15px;
+    }
+    to {
+        opacity: 1;
+        max-height: 300px;
+        padding: 15px;
+    }
+}
+
+.gimbal-info-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 13px;
+}
+
+.info-label {
+    color: #6c757d;
+    font-weight: 500;
+}
+
+.gimbal-info-item:last-child {
+    margin-bottom: 0;
+}
+
+.gimbal-device-list {
+    margin-top: 10px;
+    padding-top: 10px;
+    border-top: 1px solid #e9ecef;
+}
+
+.device-list-title {
+    font-size: 12px;
+    color: #6c757d;
+    margin-bottom: 8px;
+    font-weight: 600;
+}
+
+.gimbal-device-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 6px 10px;
+    margin-bottom: 4px;
+    background: #f8f9fa;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.device-id {
+    color: #495057;
+    font-weight: 500;
+}
+
+.device-status {
+    color: #28a745;
+    font-size: 11px;
+    background: #d4edda;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+/* 云台状态小窗口响应式样式 */
+@media (max-width: 768px) {
+    .gimbal-status-widget {
+        margin-bottom: 10px;
+    }
+    
+    .gimbal-status-header {
+        padding: 10px 12px;
+    }
+    
+    .gimbal-status-title {
+        font-size: 13px;
+    }
+    
+    .gimbal-status-details {
+        padding: 12px;
+    }
+    
+    .gimbal-info-item {
+        font-size: 12px;
+    }
+}

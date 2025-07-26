@@ -31,6 +31,38 @@
             <div class="chat-main">
                 <!-- 用户列表 -->
                 <aside class="user-list" role="complementary" aria-label="在线用户列表">
+                    <!-- 云台状态小窗口 -->
+                    <div class="gimbal-status-widget" id="gimbal-status">
+                        <div class="gimbal-status-header" onclick="toggleGimbalDetails()">
+                            <div class="gimbal-status-title">
+                                <span class="gimbal-icon">📷</span>
+                                <span>云台状态</span>
+                            </div>
+                            <div class="gimbal-status-indicator">
+                                <span id="gimbal-status-dot" class="status-dot disconnected" title="云台状态"></span>
+                                <span id="gimbal-status-text">离线</span>
+                            </div>
+                            <span class="toggle-arrow" id="gimbal-toggle-arrow">▼</span>
+                        </div>
+                        <div class="gimbal-status-details" id="gimbal-status-details" style="display: none;">
+                            <div class="gimbal-info-item">
+                                <span class="info-label">在线设备:</span>
+                                <span id="gimbal-device-count">0</span>
+                            </div>
+                            <div class="gimbal-info-item">
+                                <span class="info-label">最后活动:</span>
+                                <span id="gimbal-last-active">未知</span>
+                            </div>
+                            <div class="gimbal-info-item">
+                                <span class="info-label">控制命令:</span>
+                                <span id="gimbal-command-count">0</span>
+                            </div>
+                            <div id="gimbal-device-list" class="gimbal-device-list" style="display: none;">
+                                <!-- 云台设备列表将动态填充 -->
+                            </div>
+                        </div>
+                    </div>
+                    
                     <h3>在线用户</h3>
                     <div id="users-loading" class="loading-indicator" style="display: none;">
                         <div class="loading-spinner"></div>
@@ -133,6 +165,70 @@
             if (window.chatClient && window.chatClient.isConnected) {
                 window.chatClient.messageInput.value = '@AI 你好，这是一个测试消息';
                 window.chatClient.sendMessage();
+            }
+        }
+        
+        // 云台状态小窗口控制函数
+        function toggleGimbalDetails() {
+            const details = document.getElementById('gimbal-status-details');
+            const arrow = document.getElementById('gimbal-toggle-arrow');
+            
+            if (details.style.display === 'none') {
+                details.style.display = 'block';
+                arrow.textContent = '▲'; // 上箭头
+            } else {
+                details.style.display = 'none';
+                arrow.textContent = '▼'; // 下箭头
+            }
+        }
+        
+        // 更新云台状态函数
+        function updateGimbalStatus(statusData) {
+            const statusDot = document.getElementById('gimbal-status-dot');
+            const statusText = document.getElementById('gimbal-status-text');
+            const deviceCount = document.getElementById('gimbal-device-count');
+            const lastActive = document.getElementById('gimbal-last-active');
+            const commandCount = document.getElementById('gimbal-command-count');
+            const deviceList = document.getElementById('gimbal-device-list');
+            
+            if (statusData) {
+                // 更新状态指示器
+                if (statusData.is_gimbal_online) {
+                    statusDot.className = 'status-dot connected';
+                    statusText.textContent = '在线';
+                } else {
+                    statusDot.className = 'status-dot disconnected';
+                    statusText.textContent = '离线';
+                }
+                
+                // 更新统计信息
+                deviceCount.textContent = statusData.gimbal_devices_count || 0;
+                commandCount.textContent = statusData.gimbal_commands_sent || 0;
+                
+                // 更新最后活动时间
+                if (statusData.last_message_time) {
+                    const lastTime = new Date(statusData.last_message_time);
+                    lastActive.textContent = lastTime.toLocaleTimeString();
+                } else {
+                    lastActive.textContent = '未知';
+                }
+                
+                // 更新设备列表
+                if (statusData.gimbal_devices && statusData.gimbal_devices.length > 0) {
+                    deviceList.style.display = 'block';
+                    deviceList.innerHTML = '<div class="device-list-title">连接的设备:</div>';
+                    statusData.gimbal_devices.forEach(device => {
+                        const deviceItem = document.createElement('div');
+                        deviceItem.className = 'gimbal-device-item';
+                        deviceItem.innerHTML = `
+                            <span class="device-id">${device.client_id || '未知设备'}</span>
+                            <span class="device-status">正常</span>
+                        `;
+                        deviceList.appendChild(deviceItem);
+                    });
+                } else {
+                    deviceList.style.display = 'none';
+                }
             }
         }
         

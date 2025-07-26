@@ -813,6 +813,43 @@ def handle_get_username_suggestions():
             'timestamp': datetime.now().isoformat()
         })
 
+@socketio.on('get_gimbal_status')
+def handle_get_gimbal_status():
+    """获取云台状态信息"""
+    try:
+        if mqtt_enabled and mqtt_service:
+            # 获取MQTT服务中的云台状态
+            gimbal_status = mqtt_service.get_statistics()
+            emit('gimbal_status', gimbal_status)
+            logger.info(f"发送云台状态: {request.sid}")
+        else:
+            # MQTT服务未启用或不可用时返回默认状态
+            default_status = {
+                'is_connected': False,
+                'is_running': False,
+                'broker_info': 'MQTT服务未启用',
+                'mqtt_users_count': 0,
+                'gimbal_devices_count': 0,
+                'is_gimbal_online': False,
+                'messages_received': 0,
+                'messages_sent': 0,
+                'gimbal_commands_sent': 0,
+                'connect_time': None,
+                'last_message_time': None,
+                'active_topics': [],
+                'mqtt_users': [],
+                'gimbal_devices': []
+            }
+            emit('gimbal_status', default_status)
+            logger.info(f"发送默认云台状态: {request.sid}")
+            
+    except Exception as e:
+        logger.error(f"获取云台状态异常: {request.sid}, {e}")
+        emit('gimbal_status_error', {
+            'error': '获取云台状态失败',
+            'timestamp': datetime.now().isoformat()
+        })
+
 @socketio.on_error_default
 def default_error_handler(e):
     """默认错误处理器"""

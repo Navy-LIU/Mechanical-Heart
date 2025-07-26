@@ -404,6 +404,9 @@ class MQTTService:
             
             logger.info(f"云台设备注册成功: {username} (client_id: {client_id})")
             
+            # 广播云台状态更新
+            self._broadcast_gimbal_status_update()
+            
         except Exception as e:
             logger.error(f"处理云台设备注册异常: {e}")
     
@@ -473,6 +476,9 @@ class MQTTService:
             
             logger.info(f"云台状态更新: {client_id} -> {status}")
             
+            # 广播云台状态更新到WebSocket客户端
+            self._broadcast_gimbal_status_update()
+            
         except Exception as e:
             logger.error(f"处理云台状态消息异常: {e}")
     
@@ -497,6 +503,9 @@ class MQTTService:
                 self._publish_system_message(f"云台设备 {gimbal_info['username']} 已断开连接")
                 
                 logger.info(f"云台设备断开连接: {gimbal_info['username']} (client_id: {client_id})")
+                
+                # 广播云台状态更新
+                self._broadcast_gimbal_status_update()
                 
         except Exception as e:
             logger.error(f"处理云台设备断开连接异常: {e}")
@@ -659,6 +668,20 @@ class MQTTService:
         except Exception as e:
             logger.error(f"执行云台控制异常: {e}")
             return False
+    
+    def _broadcast_gimbal_status_update(self):
+        """广播云台状态更新到WebSocket客户端"""
+        try:
+            if self.broadcast_manager:
+                gimbal_status = self.get_statistics()
+                self.broadcast_manager.broadcast_custom_event(
+                    event_type='gimbal_status_update',
+                    data={'gimbal_status': gimbal_status},
+                    room='main'
+                )
+                logger.debug(f"广播云台状态更新")
+        except Exception as e:
+            logger.error(f"广播云台状态更新失败: {e}")
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取MQTT服务统计信息"""

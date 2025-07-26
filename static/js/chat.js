@@ -330,6 +330,9 @@ class ChatClient {
                 this.updateUsersList(data.online_users);
                 this.onlineCount.textContent = data.online_users.length;
             }
+            
+            // 请求云台状态信息
+            this.socket.emit('get_gimbal_status');
         });
         
         // 加入失败 - 修复事件名
@@ -380,7 +383,15 @@ class ChatClient {
                 case 'system_notification':
                     this.showNotification(data.message, data.level || 'info');
                     break;
+                case 'gimbal_status_update':
+                    this.updateGimbalStatusDisplay(data.gimbal_status);
+                    break;
             }
+        });
+        
+        // 云台状态更新事件
+        this.socket.on('gimbal_status', (data) => {
+            this.updateGimbalStatusDisplay(data);
         });
         
         // AI开始思考
@@ -858,6 +869,14 @@ class ChatClient {
         ].join('\n');
         
         alert('用户信息:\n' + info);
+    }
+    
+    // 更新云台状态显示
+    updateGimbalStatusDisplay(statusData) {
+        // 调用全局的updateGimbalStatus函数
+        if (typeof updateGimbalStatus === 'function') {
+            updateGimbalStatus(statusData);
+        }
     }
     
     // 工具方法：格式化时间
