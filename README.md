@@ -1,136 +1,149 @@
-# AI聊天室
+# 增强版MQTT云台管理器
 
-一个基于Python Flask的实时多用户聊天室，集成月之暗面AI作为虚拟用户。
+这是一个增强版的MQTT云台管理程序，在原有的自动/手动模式切换功能基础上，新增了以下两个重要事件：
 
-## 功能特性
+1. **服务器控制云台事件** - 服务器可以直接控制云台的移动、缩放等操作
+2. **云台状态发布事件** - 云台定期发布自己的当前状态信息
 
-- 🚀 实时多用户聊天
-- 🤖 AI虚拟用户集成（月之暗面API）
-- 💬 @AI触发智能回复
-- 👥 在线用户列表
-- 📱 响应式设计
-- 🔒 安全的API密钥管理
-- 🎥 云台设备控制集成
-- 📡 MQTT通信支持
-- 🔌 HTTP API接口
+## 新增功能
 
-## 技术栈
+### 1. 云台控制事件 (`camera/gimbal/control`)
 
-- **后端**: Flask + Flask-SocketIO
-- **前端**: HTML5 + CSS3 + JavaScript
-- **实时通信**: WebSocket (Socket.IO)
-- **AI集成**: 月之暗面API (OpenAI兼容)
-- **MQTT**: 支持MQTT通信协议
-- **设备控制**: 云台设备集成
+服务器可以通过此主题发送控制指令来控制云台：
 
-## 快速开始
+#### 支持的控制指令：
 
-### 1. 安装依赖
+##### 移动控制
+```json
+{
+  "command": "move",
+  "pan": 45,        // 水平角度 (-180 到 180)
+  "tilt": -30,      // 俯仰角度 (-90 到 90)  
+  "speed": 1.5      // 移动速度 (可选，默认1.0)
+}
+```
 
+##### 缩放控制
+```json
+{
+  "command": "zoom",
+  "zoom": 2.0       // 缩放倍数
+}
+```
+
+##### 预设位置
+```json
+{
+  "command": "preset",
+  "preset_id": 1    // 预设位置ID (1-4)
+}
+```
+
+预设位置定义：
+- 1: 正前方 (pan: 0°, tilt: 0°)
+- 2: 右前方俯视 (pan: 90°, tilt: -30°)
+- 3: 左前方俯视 (pan: -90°, tilt: -30°)
+- 4: 正后方 (pan: 180°, tilt: 0°)
+
+##### 校准
+```json
+{
+  "command": "calibrate"
+}
+```
+
+##### 重置
+```json
+{
+  "command": "reset"
+}
+```
+
+### 2. 云台状态发布事件 (`camera/gimbal/status`)
+
+云台每秒自动发布一次状态信息：
+
+```json
+{
+  "pan": 0.0,           // 当前水平角度
+  "tilt": 0.0,          // 当前俯仰角度
+  "roll": 0.0,          // 当前翻滚角度
+  "zoom": 1.0,          // 当前缩放倍数
+  "mode": "tracking",   // 当前模式: idle/tracking/manual_control
+  "online": true,       // 是否在线
+  "battery": 100,       // 电池电量百分比
+  "timestamp": 1640995200000  // 时间戳(毫秒)
+}
+```
+
+## 原有功能保持不变
+
+### 模式切换事件 (`camera/manager/set_mode`)
+
+```json
+{"mode": "auto"}    // 切换到自动追踪模式
+{"mode": "manual"}  // 切换到手动控制模式
+```
+
+### 自动进程控制事件 (`camera/tracking/set_mode`)
+
+```json
+{"mode": "auto"}    // 开始自动追踪
+{"mode": "pause"}   // 暂停自动追踪
+```
+
+## 文件说明
+
+- `enhanced_mqtt_manager.py` - 增强版主程序
+- `test_gimbal_control.py` - 功能测试脚本
+- `README.md` - 本说明文档
+
+## 使用方法
+
+### 1. 运行主程序
 ```bash
-pip install -r requirements.txt
+python3 enhanced_mqtt_manager.py
 ```
 
-### 2. 配置环境变量
-
-复制 `.env.example` 为 `.env` 并填入配置：
-
+### 2. 运行测试脚本（在另一个终端）
 ```bash
-cp .env.example .env
+python3 test_gimbal_control.py
 ```
 
-编辑 `.env` 文件，填入你的月之暗面API密钥：
-
-```env
-MOONSHOT_API_KEY=sk-your-api-key-here
-```
-
-### 3. 运行应用
-
-```bash
-python app.py
-```
-
-访问 http://localhost:5000 开始聊天！
-
-## 使用说明
-
-1. 打开网站，输入昵称加入聊天室
-2. 在聊天框中输入消息与其他用户交流
-3. 使用 `@AI` 来与AI助手对话
-4. 使用 `@云台 Ang_x=2500 Ang_Y=2000` 命令控制云台设备
-5. 查看右侧用户列表了解在线用户
-
-## 云台控制功能
-
-本项目支持通过MQTT协议控制云台设备，提供两种控制方式：
-
-### 1. 聊天室控制
-
-在聊天室中使用以下命令格式：
-```
-@云台 Ang_x=2500 Ang_Y=2000
-```
-
-### 2. HTTP API控制
-
-直接通过HTTP API接口控制：
-
-```bash
-# 云台控制
-curl -X POST -H "Content-Type: application/json" \
-     -d '{"x": 2500, "y": 2000, "username": "用户名"}' \
-     http://localhost:5000/api/gimbal/control
-
-# 查询状态
-curl http://localhost:5000/api/gimbal/status
-
-# 设备列表
-curl http://localhost:5000/api/gimbal/list
-```
-
-### 云台设备启动
-
-```bash
-# 启动云台设备模拟器
-python3 gimbal_device_simulator.py --host 127.0.0.1 --port 1883
-```
-
-详细使用说明请查看：[**云台HTTP控制API使用指南**](云台HTTP控制API使用指南.md)
-
-## 项目结构
+## 程序架构
 
 ```
-ai-chat-website/
-├── app.py              # 主应用入口
-├── config.py           # 配置管理
-├── requirements.txt    # 依赖包
-├── .env.example       # 环境变量示例
-├── models/            # 数据模型
-├── services/          # 业务服务
-├── templates/         # HTML模板
-├── static/           # 静态资源
-│   ├── css/         # 样式文件
-│   └── js/          # JavaScript文件
-└── tests/            # 测试文件
+MQTT Broker (192.168.137.1:1883)
+    │
+    ├── camera/manager/set_mode         (原有：模式切换)
+    ├── camera/tracking/set_mode        (原有：自动进程控制)
+    ├── camera/gimbal/control          (新增：云台控制)
+    └── camera/gimbal/status           (新增：状态发布)
+                │
+                ├── 自动进程 (C++程序)
+                ├── 手动进程 (Python程序)
+                └── 状态发布线程
 ```
 
-## 开发指南
+## 技术特点
 
-### 运行测试
+1. **非阻塞式状态发布** - 使用独立线程每秒发布一次云台状态
+2. **多种控制方式** - 支持精确角度控制、预设位置、校准和重置
+3. **状态同步** - 云台状态与工作模式实时同步
+4. **错误处理** - 完善的异常处理和日志输出
+5. **向后兼容** - 完全保持原有功能不变
 
-```bash
-pytest
-```
+## 扩展说明
 
-### 生产环境部署
+在实际部署时，需要根据具体的云台硬件接口来实现：
 
-使用Gunicorn运行：
+1. **硬件控制接口** - 替换模拟的云台控制代码为实际的硬件控制调用
+2. **状态反馈** - 从实际硬件获取云台位置和状态信息
+3. **配置参数** - 根据云台规格调整角度范围和速度参数
 
-```bash
-gunicorn --worker-class eventlet -w 1 app:app
-```
+## 注意事项
 
-## 许可证
-
-MIT License
+1. 请确保MQTT服务器地址配置正确
+2. 确保所有进程路径配置正确
+3. 在生产环境中，建议增加身份验证和权限控制
+4. 监控网络连接状态，必要时实现重连机制

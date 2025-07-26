@@ -1,203 +1,134 @@
 #!/usr/bin/env python3
 """
-云台控制MQTT测试脚本
-用于测试通过MQTT发送云台控制命令
+测试脚本：演示如何使用新增的云台控制和状态监控功能
 """
+
+import paho.mqtt.client as mqtt
 import json
 import time
-import logging
-import paho.mqtt.client as mqtt
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
+# MQTT配置
+MQTT_BROKER_HOST = "192.168.137.1"
+MQTT_BROKER_PORT = 1883
 
+# MQTT主题
+GIMBAL_CONTROL_TOPIC = "camera/gimbal/control"
+GIMBAL_STATUS_TOPIC = "camera/gimbal/status"
+MANAGER_TOPIC = "camera/manager/set_mode"
 
-class GimbalControlTester:
-    """云台控制测试器"""
-    
-    def __init__(self, broker_host="localhost", broker_port=1883):
-        """
-        初始化测试器
-        
-        Args:
-            broker_host: MQTT代理服务器地址
-            broker_port: MQTT代理服务器端口
-        """
-        self.broker_host = broker_host
-        self.broker_port = broker_port
-        
-        # MQTT客户端
-        self.client = mqtt.Client()
-        self.client.on_connect = self._on_connect
-        self.client.on_message = self._on_message
-        self.client.on_disconnect = self._on_disconnect
-        
-        # 主题配置
-        self.gimbal_topic = "device/gimbal/control"
-        self.system_topic = "chatroom/system"
-        
-        # 状态
-        self.is_connected = False
-        
-    def _on_connect(self, client, userdata, flags, rc):
-        """连接回调"""
-        if rc == 0:
-            self.is_connected = True
-            logger.info("MQTT连接成功")
-            
-            # 订阅系统消息主题以接收反馈
-            client.subscribe(self.system_topic)
-            logger.info(f"订阅系统消息主题: {self.system_topic}")
-            
-        else:
-            logger.error(f"MQTT连接失败，错误代码: {rc}")
-    
-    def _on_disconnect(self, client, userdata, rc):
-        """断开连接回调"""
-        self.is_connected = False
-        logger.info(f"MQTT连接断开，代码: {rc}")
-    
-    def _on_message(self, client, userdata, message):
-        """消息回调"""
+def on_connect(client, userdata, flags, rc):
+    if rc == 0:
+        print("测试客户端已连接到MQTT服务器")
+        # 订阅云台状态主题以监控状态变化
+        client.subscribe(GIMBAL_STATUS_TOPIC)
+        print(f"已订阅云台状态主题: {GIMBAL_STATUS_TOPIC}")
+    else:
+        print(f"连接失败，返回码: {rc}")
+
+def on_message(client, userdata, msg):
+    """处理收到的云台状态消息"""
+    if msg.topic == GIMBAL_STATUS_TOPIC:
         try:
-            topic = message.topic
-            payload = message.payload.decode('utf-8')
-            
-            logger.info(f"收到消息: {topic} -> {payload}")
-            
+            status = json.loads(msg.payload.decode('utf-8'))
+            print(f"\n[云台状态更新]: {json.dumps(status, indent=2, ensure_ascii=False)}")
         except Exception as e:
-            logger.error(f"处理消息异常: {e}")
-    
-    def connect(self):
-        """连接到MQTT代理"""
-        try:
-            logger.info(f"连接到MQTT代理: {self.broker_host}:{self.broker_port}")
-            self.client.connect(self.broker_host, self.broker_port, 60)
-            self.client.loop_start()
-            
-            # 等待连接
-            retry_count = 0
-            while not self.is_connected and retry_count < 10:
-                time.sleep(0.5)
-                retry_count += 1
-            
-            return self.is_connected
-            
-        except Exception as e:
-            logger.error(f"连接失败: {e}")
-            return False
-    
-    def disconnect(self):
-        """断开连接"""
-        if self.is_connected:
-            self.client.loop_stop()
-            self.client.disconnect()
-    
-    def send_gimbal_command(self, ang_x, ang_y):
-        """
-        发送云台控制命令
-        
-        Args:
-            ang_x: X轴角度
-            ang_y: Y轴角度
-        """
-        if not self.is_connected:
-            logger.error("MQTT未连接")
-            return False
-        
-        try:
-            # 构造命令
-            command = f"Ang_X={ang_x},Ang_Y={ang_y}"
-            
-            # 发送命令
-            self.client.publish(self.gimbal_topic, command)
-            logger.info(f"发送云台控制命令: {command}")
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"发送命令失败: {e}")
-            return False
-    
-    def run_test_suite(self):
-        """运行测试套件"""
-        logger.info("开始云台控制测试")
-        
-        # 连接到MQTT
-        if not self.connect():
-            logger.error("无法连接到MQTT代理")
-            return
-        
-        try:
-            # 等待一秒以确保连接稳定
-            time.sleep(1)
-            
-            # 测试用例
-            test_cases = [
-                # 正常情况
-                {"name": "正常情况1", "x": 2036, "y": 2125},
-                {"name": "正常情况2", "x": 1024, "y": 1850},  # 最小值
-                {"name": "正常情况3", "x": 3048, "y": 2400},  # 最大值
-                {"name": "正常情况4", "x": 2000, "y": 2000},  # 中间值
-                
-                # 边界情况
-                {"name": "X边界测试", "x": 1023, "y": 2000},  # X超出下限
-                {"name": "X边界测试", "x": 3049, "y": 2000},  # X超出上限
-                {"name": "Y边界测试", "x": 2000, "y": 1849},  # Y超出下限
-                {"name": "Y边界测试", "x": 2000, "y": 2401},  # Y超出上限
-            ]
-            
-            for i, case in enumerate(test_cases):
-                logger.info(f"\n=== 测试用例 {i+1}: {case['name']} ===")
-                self.send_gimbal_command(case['x'], case['y'])
-                
-                # 等待处理
-                time.sleep(2)
-            
-            # 发送格式错误的命令测试
-            logger.info("\n=== 格式错误测试 ===")
-            
-            error_commands = [
-                "X=2036,Y=2125",  # 缺少Ang_前缀
-                "Ang_X=2036,Ang_Z=2125",  # 错误的轴名
-                "Ang_X=abc,Ang_Y=2125",  # 非数字
-                "Ang_X=2036",  # 缺少Y参数
-                "Ang_X=2036,Ang_Y=2125,Extra=123"  # 多余参数
-            ]
-            
-            for cmd in error_commands:
-                logger.info(f"发送错误格式命令: {cmd}")
-                self.client.publish(self.gimbal_topic, cmd)
-                time.sleep(1.5)
-            
-            logger.info("\n测试完成，等待5秒接收反馈...")
-            time.sleep(5)
-            
-        finally:
-            self.disconnect()
-            logger.info("测试结束")
+            print(f"解析状态消息失败: {e}")
 
+def send_gimbal_control_command(client, command):
+    """发送云台控制指令"""
+    try:
+        command_json = json.dumps(command, ensure_ascii=False)
+        print(f"\n发送云台控制指令: {command_json}")
+        client.publish(GIMBAL_CONTROL_TOPIC, command_json, qos=1)
+    except Exception as e:
+        print(f"发送控制指令失败: {e}")
+
+def send_mode_change_command(client, mode):
+    """发送模式切换指令"""
+    try:
+        command = {"mode": mode}
+        command_json = json.dumps(command)
+        print(f"\n发送模式切换指令: {command_json}")
+        client.publish(MANAGER_TOPIC, command_json, qos=1)
+    except Exception as e:
+        print(f"发送模式切换指令失败: {e}")
 
 def main():
-    """主函数"""
-    print("云台控制MQTT测试脚本")
-    print("=" * 50)
-    
-    # 创建测试器
-    tester = GimbalControlTester()
+    # 创建MQTT客户端
+    client = mqtt.Client()
+    client.on_connect = on_connect
+    client.on_message = on_message
     
     try:
-        # 运行测试
-        tester.run_test_suite()
+        client.connect(MQTT_BROKER_HOST, MQTT_BROKER_PORT, 60)
+        client.loop_start()
         
-    except KeyboardInterrupt:
-        logger.info("测试被用户中断")
+        print("=== 云台控制测试开始 ===")
+        time.sleep(2)  # 等待连接稳定
+        
+        # 测试1: 云台移动控制
+        print("\n--- 测试1: 云台移动控制 ---")
+        send_gimbal_control_command(client, {
+            "command": "move",
+            "pan": 45,
+            "tilt": -30,
+            "speed": 1.5
+        })
+        time.sleep(3)
+        
+        # 测试2: 缩放控制
+        print("\n--- 测试2: 缩放控制 ---")
+        send_gimbal_control_command(client, {
+            "command": "zoom",
+            "zoom": 2.0
+        })
+        time.sleep(3)
+        
+        # 测试3: 预设位置
+        print("\n--- 测试3: 移动到预设位置 ---")
+        send_gimbal_control_command(client, {
+            "command": "preset",
+            "preset_id": 2
+        })
+        time.sleep(3)
+        
+        # 测试4: 云台校准
+        print("\n--- 测试4: 云台校准 ---")
+        send_gimbal_control_command(client, {
+            "command": "calibrate"
+        })
+        time.sleep(3)
+        
+        # 测试5: 重置云台
+        print("\n--- 测试5: 重置云台 ---")
+        send_gimbal_control_command(client, {
+            "command": "reset"
+        })
+        time.sleep(3)
+        
+        # 测试6: 模式切换测试
+        print("\n--- 测试6: 模式切换测试 ---")
+        print("切换到手动模式...")
+        send_mode_change_command(client, "manual")
+        time.sleep(5)
+        
+        print("切换回自动模式...")
+        send_mode_change_command(client, "auto")
+        time.sleep(5)
+        
+        # 持续监控状态
+        print("\n--- 持续监控云台状态 (按Ctrl+C退出) ---")
+        try:
+            while True:
+                time.sleep(1)
+        except KeyboardInterrupt:
+            print("\n测试结束")
+            
     except Exception as e:
-        logger.error(f"测试异常: {e}")
+        print(f"测试过程中出现错误: {e}")
     finally:
-        tester.disconnect()
-
+        client.loop_stop()
+        client.disconnect()
 
 if __name__ == "__main__":
     main()
