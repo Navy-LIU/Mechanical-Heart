@@ -11,7 +11,8 @@ from typing import Dict, Any, Callable, Optional
 import paho.mqtt.client as mqtt
 from flask import current_app
 
-from services.message_handler import get_message_handler
+# 延迟导入以避免循环导入
+# from services.message_handler import get_message_handler
 from services.user_manager import get_user_manager
 from services.broadcast_manager import get_broadcast_manager
 
@@ -40,7 +41,7 @@ class MQTTService:
         self.client.on_disconnect = self._on_disconnect
         
         # 服务组件
-        self.message_handler = get_message_handler()
+        self.message_handler = None  # 延迟初始化
         self.user_manager = get_user_manager()
         self.broadcast_manager = get_broadcast_manager()
         
@@ -48,6 +49,8 @@ class MQTTService:
         self.is_connected = False
         self.is_running = False
         self.mqtt_users = {}  # client_id -> user_info 映射
+        self.gimbal_devices = {}  # client_id -> gimbal_info 映射
+        self.is_gimbal_online = False
         
         # MQTT主题配置
         self.topics = {
@@ -56,14 +59,18 @@ class MQTTService:
             'user_join': 'chatroom/users/join',     # 用户加入主题
             'user_leave': 'chatroom/users/leave',   # 用户离开主题
             'system': 'chatroom/system',            # 系统消息主题
-            'gimbal_control': 'device/gimbal/control'  # 云台控制主题
+            'gimbal_control': 'device/gimbal/control',  # 云台控制主题
+            'gimbal_register': 'device/gimbal/register',  # 云台注册主题
+            'gimbal_status': 'device/gimbal/status'  # 云台状态主题
         }
         
         # 统计信息
         self.stats = {
             'mqtt_users_count': 0,
+            'gimbal_devices_count': 0,
             'messages_received': 0,
             'messages_sent': 0,
+            'gimbal_commands_sent': 0,
             'connect_time': None,
             'last_message_time': None
         }
@@ -129,6 +136,10 @@ class MQTTService:
             for client_id in list(self.mqtt_users.keys()):
                 self._handle_mqtt_user_leave(client_id)
             
+            # 清理云台设备
+            for client_id in list(self.gimbal_devices.keys()):
+                self._handle_gimbal_disconnect(client_id)
+            
             self.is_connected = False
             logger.info("MQTT服务已停止")
             
@@ -144,7 +155,7 @@ class MQTTService:
             
             # 订阅相关主题
             for topic_name, topic in self.topics.items():
-                if topic_name in ['chat_in', 'user_join', 'user_leave', 'gimbal_control']:
+                if topic_name in ['chat_in', 'user_join', 'user_leave', 'gimbal_register', 'gimbal_status']:
                     client.subscribe(topic)
                     logger.info(f"订阅主题: {topic}")
             
@@ -184,6 +195,10 @@ class MQTTService:
                 self._handle_mqtt_user_join(msg_data)
             elif topic == self.topics['user_leave']:
                 self._handle_mqtt_user_leave_msg(msg_data)
+            elif topic == self.topics['gimbal_register']:
+                self._handle_gimbal_register(msg_data)
+            elif topic == self.topics['gimbal_status']:
+                self._handle_gimbal_status(msg_data)
             elif topic == self.topics['gimbal_control']:
                 self._handle_gimbal_control(payload)
             
@@ -208,6 +223,11 @@ class MQTTService:
             
             # 确保MQTT用户存在
             self._ensure_mqtt_user_exists(client_id, username)
+            
+            # 延迟初始化message_handler
+            if self.message_handler is None:
+                from services.message_handler import get_message_handler
+                self.message_handler = get_message_handler()
             
             # 处理消息
             result = self.message_handler.process_message(
@@ -336,6 +356,119 @@ class MQTTService:
         except Exception as e:
             logger.error(f"处理云台控制消息异常: {e}")
             self._publish_system_message(f"云台控制异常: {str(e)}")
+    
+    def _handle_gimbal_register(self, msg_data: Dict[str, Any]):
+        """
+        处理云台设备注册
+        消息格式: {"client_id": "gimbal_001", "username": "云台", "device_type": "gimbal"}
+        
+        Args:
+            msg_data: 注册消息数据
+        """
+        try:
+            client_id = msg_data.get('client_id', 'unknown_gimbal')
+            username = msg_data.get('username', '云台')
+            device_type = msg_data.get('device_type', 'gimbal')
+            device_info = msg_data.get('device_info', {})
+            
+            # 验证是否是云台设备
+            if username != '云台' and device_type != 'gimbal':
+                logger.warning(f"非云台设备尝试注册: {username}, 类型: {device_type}")
+                return
+            
+            # 创建云台设备信息
+            gimbal_info = {
+                'client_id': client_id,
+                'username': username,
+                'device_type': device_type,
+                'device_info': device_info,
+                'register_time': datetime.now(),
+                'last_seen': datetime.now(),
+                'command_count': 0,
+                'is_online': True
+            }
+            
+            # 注册云台设备
+            self.gimbal_devices[client_id] = gimbal_info
+            self.stats['gimbal_devices_count'] = len(self.gimbal_devices)
+            self.is_gimbal_online = True
+            
+            # 发送系统消息
+            self._publish_system_message(f"云台设备 {username} ({client_id}) 已连接")
+            
+            # 广播到聊天室
+            self.broadcast_manager.broadcast_system_notification(
+                f"🎥 云台设备 {username} 已上线，可使用 @云台 指令进行控制",
+                room="main"
+            )
+            
+            logger.info(f"云台设备注册成功: {username} (client_id: {client_id})")
+            
+        except Exception as e:
+            logger.error(f"处理云台设备注册异常: {e}")
+    
+    def _handle_gimbal_status(self, msg_data: Dict[str, Any]):
+        """
+        处理云台状态消息
+        消息格式: {"client_id": "gimbal_001", "status": "online/offline", "current_position": {"x": 2036, "y": 2125}}
+        
+        Args:
+            msg_data: 状态消息数据
+        """
+        try:
+            client_id = msg_data.get('client_id', 'unknown_gimbal')
+            status = msg_data.get('status', 'unknown')
+            current_position = msg_data.get('current_position', {})
+            
+            # 更新云台设备状态
+            if client_id in self.gimbal_devices:
+                self.gimbal_devices[client_id]['last_seen'] = datetime.now()
+                self.gimbal_devices[client_id]['is_online'] = (status == 'online')
+                
+                if current_position:
+                    self.gimbal_devices[client_id]['current_position'] = current_position
+                
+                # 更新全局状态
+                self.is_gimbal_online = any(
+                    device['is_online'] for device in self.gimbal_devices.values()
+                )
+                
+                if status == 'offline':
+                    self._publish_system_message(f"云台设备 {client_id} 已离线")
+                    self.broadcast_manager.broadcast_system_notification(
+                        f"📴 云台设备 {client_id} 已离线",
+                        room="main"
+                    )
+            
+            logger.info(f"云台状态更新: {client_id} -> {status}")
+            
+        except Exception as e:
+            logger.error(f"处理云台状态消息异常: {e}")
+    
+    def _handle_gimbal_disconnect(self, client_id: str):
+        """
+        处理云台设备断开连接
+        
+        Args:
+            client_id: 云台设备ID
+        """
+        try:
+            if client_id in self.gimbal_devices:
+                gimbal_info = self.gimbal_devices.pop(client_id)
+                self.stats['gimbal_devices_count'] = len(self.gimbal_devices)
+                
+                # 更新全局状态
+                self.is_gimbal_online = any(
+                    device['is_online'] for device in self.gimbal_devices.values()
+                )
+                
+                # 发送系统消息
+                self._publish_system_message(f"云台设备 {gimbal_info['username']} 已断开连接")
+                
+                logger.info(f"云台设备断开连接: {gimbal_info['username']} (client_id: {client_id})")
+                
+        except Exception as e:
+            logger.error(f"处理云台设备断开连接异常: {e}")
     
     def _ensure_mqtt_user_exists(self, client_id: str, username: str):
         """确保MQTT用户存在"""
@@ -483,6 +616,9 @@ class MQTTService:
             
             logger.info(f"模拟云台控制: 设置X={ang_x}, Y={ang_y}")
             
+            # 更新统计
+            self.stats['gimbal_commands_sent'] += 1
+            
             # 模拟控制延迟
             import time
             time.sleep(0.1)
@@ -500,13 +636,19 @@ class MQTTService:
             'is_running': self.is_running,
             'broker_info': f"{self.broker_host}:{self.broker_port}",
             'mqtt_users_count': self.stats['mqtt_users_count'],
+            'gimbal_devices_count': self.stats['gimbal_devices_count'],
+            'is_gimbal_online': self.is_gimbal_online,
             'messages_received': self.stats['messages_received'],
             'messages_sent': self.stats['messages_sent'],
+            'gimbal_commands_sent': self.stats['gimbal_commands_sent'],
             'connect_time': self.stats['connect_time'].isoformat() if self.stats['connect_time'] else None,
             'last_message_time': self.stats['last_message_time'].isoformat() if self.stats['last_message_time'] else None,
             'active_topics': list(self.topics.values()),
             'mqtt_users': list(self.mqtt_users.values()),
-            'gimbal_control_topic': self.topics['gimbal_control']
+            'gimbal_devices': list(self.gimbal_devices.values()),
+            'gimbal_control_topic': self.topics['gimbal_control'],
+            'gimbal_register_topic': self.topics['gimbal_register'],
+            'gimbal_status_topic': self.topics['gimbal_status']
         }
     
     def send_message_to_mqtt(self, message, ai_response=None):
@@ -518,6 +660,64 @@ class MQTTService:
             ai_response: AI回复对象（可选）
         """
         self._publish_chat_message(message, ai_response)
+    
+    def send_gimbal_command_from_chat(self, ang_x: int, ang_y: int, username: str) -> bool:
+        """
+        从聊天室向云台发送控制指令
+        
+        Args:
+            ang_x: X轴角度
+            ang_y: Y轴角度
+            username: 发送用户
+            
+        Returns:
+            发送是否成功
+        """
+        try:
+            if not self.is_connected:
+                logger.warning("MQTT服务未连接")
+                return False
+            
+            if not self.is_gimbal_online:
+                logger.warning("没有云台设备在线")
+                # 广播错误信息
+                self.broadcast_manager.broadcast_system_notification(
+                    f"⚠️ 云台设备离线，无法执行控制指令 ({username})",
+                    room="main"
+                )
+                return False
+            
+            # 构建MQTT控制消息
+            mqtt_command = f"Ang_X={ang_x},Ang_Y={ang_y}"
+            
+            # 发送到云台控制主题
+            result = self.client.publish(
+                self.topics['gimbal_control'], 
+                mqtt_command
+            )
+            
+            if result.rc == 0:
+                logger.info(f"云台控制指令已发送: {mqtt_command} (来自用户: {username})")
+                self.stats['gimbal_commands_sent'] += 1
+                
+                # 发送系统消息通知
+                self._publish_system_message(
+                    f"用户 {username} 发送云台控制指令: X={ang_x}, Y={ang_y}"
+                )
+                
+                # 广播到聊天室
+                self.broadcast_manager.broadcast_system_notification(
+                    f"🎥 云台控制: {username} 设置 X={ang_x}, Y={ang_y}",
+                    room="main"
+                )
+                return True
+            else:
+                logger.error(f"发送云台控制指令失败: {mqtt_command}, 错误代码: {result.rc}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"发送云台控制指令异常: {e}")
+            return False
 
 
 # 全局MQTT服务实例
@@ -574,7 +774,7 @@ class MQTTMessageBridge:
     
     def __init__(self, mqtt_service: MQTTService):
         self.mqtt_service = mqtt_service
-        self.message_handler = get_message_handler()
+        self.message_handler = None  # 延迟初始化
         
     def forward_to_mqtt(self, message, ai_response=None):
         """将聊天室消息转发到MQTT"""
@@ -582,4 +782,9 @@ class MQTTMessageBridge:
         
     def process_from_mqtt(self, mqtt_message: Dict[str, Any]):
         """处理从MQTT收到的消息"""
+        # 延迟初始化message_handler
+        if self.message_handler is None:
+            from services.message_handler import get_message_handler
+            self.message_handler = get_message_handler()
+        
         return self.mqtt_service._handle_chat_message(mqtt_message)

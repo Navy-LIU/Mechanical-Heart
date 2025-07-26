@@ -12,6 +12,7 @@ from models.user import User
 from services.ai_client import get_ai_client, AIResponseHandler
 from services.chat_history import get_chat_history
 from services.user_manager import get_user_manager
+from services.mqtt_service import get_mqtt_service
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -100,6 +101,11 @@ class MessageHandler:
                     self.stats['ai_messages'] += 1
                     # 保存AI回复到历史
                     self.chat_history.add_message(ai_response)
+            
+            # 检查是否是云台控制指令
+            gimbal_command = self._extract_gimbal_command(message_content)
+            if gimbal_command:
+                self._handle_gimbal_command(gimbal_command, username)
             
             # 生成广播数据
             broadcast_data = self._generate_broadcast_data(user_message, ai_response)
@@ -192,9 +198,21 @@ class MessageHandler:
         if not username:
             return {'valid': False, 'error': '用户名不能为空'}
         
-        # 使用User模型的用户名验证
-        if not User.is_valid_username(username):
-            return {'valid': False, 'error': '用户名格式无效：只能包含中文、英文、数字、下划线，且不能是纯数字'}
+        # 对于URL用户和MQTT用户，允许带有后缀的用户名
+        if ' (URL)' in username or ' (MQTT)' in username:
+            # 提取原始用户名（去除后缀）
+            if ' (URL)' in username:
+                original_username = username.replace(' (URL)', '')
+            elif ' (MQTT)' in username:
+                original_username = username.replace(' (MQTT)', '')
+            
+            # 验证原始用户名
+            if not User.is_valid_username(original_username):
+                return {'valid': False, 'error': '用户名格式无效：只能包含中文、英文、数字、下划线，且不能是纯数字'}
+        else:
+            # 普通用户使用标准验证
+            if not User.is_valid_username(username):
+                return {'valid': False, 'error': '用户名格式无效：只能包含中文、英文、数字、下划线，且不能是纯数字'}
         
         return {'valid': True, 'error': None}
     
@@ -216,6 +234,113 @@ class MessageHandler:
                 return {'valid': False, 'error': f'用户会话验证失败: {message}'}
         
         return {'valid': True, 'error': None}
+    
+    def _extract_gimbal_command(self, content: str) -> Optional[Dict[str, Any]]:
+        """
+        提取云台控制指令
+        支持格式: @云台 云台控制 Ang_x=xxx Ang_Y=yyy
+        或: @云台 Ang_x=xxx Ang_Y=yyy
+        
+        Args:
+            content: 消息内容
+            
+        Returns:
+            云台控制参数字典，如果不是云台控制指令则返回None
+        """
+        import re
+        
+        try:
+            # 检查是否包含@云台
+            if '@云台' not in content:
+                return None
+            
+            # 提取@云台后的内容
+            gimbal_mention_pattern = r'@云台\s+(.+)'
+            match = re.search(gimbal_mention_pattern, content)
+            
+            if not match:
+                return None
+            
+            gimbal_content = match.group(1).strip()
+            
+            # 移除可选的"云台控制"文本
+            gimbal_content = re.sub(r'^云台控制\s+', '', gimbal_content)
+            
+            # 解析Ang_x和Ang_Y参数
+            # 支持多种格式: Ang_x=xxx Ang_Y=yyy 或 Ang_X=xxx,Ang_Y=yyy
+            ang_x_pattern = r'Ang_[xX]\s*=\s*(\d+)'
+            ang_y_pattern = r'Ang_[yY]\s*=\s*(\d+)'
+            
+            x_match = re.search(ang_x_pattern, gimbal_content)
+            y_match = re.search(ang_y_pattern, gimbal_content)
+            
+            if not x_match or not y_match:
+                logger.warning(f"云台控制指令格式错误: {gimbal_content}")
+                return {'error': '云台控制指令格式错误，正确格式: @云台 Ang_x=xxx Ang_Y=yyy'}
+            
+            try:
+                ang_x = int(x_match.group(1))
+                ang_y = int(y_match.group(1))
+            except ValueError:
+                logger.warning(f"云台控制参数解析错误: {gimbal_content}")
+                return {'error': '云台控制参数必须是数字'}
+            
+            # 验证参数范围
+            if not (1024 <= ang_x <= 3048):
+                return {'error': f'Ang_x参数超出范围: {ang_x}，应在1024-3048之间'}
+            
+            if not (1850 <= ang_y <= 2400):
+                return {'error': f'Ang_Y参数超出范围: {ang_y}，应在1850-2400之间'}
+            
+            logger.info(f"解析到云台控制指令: X={ang_x}, Y={ang_y}")
+            
+            return {
+                'ang_x': ang_x,
+                'ang_y': ang_y,
+                'original_command': gimbal_content
+            }
+            
+        except Exception as e:
+            logger.error(f"解析云台控制指令异常: {e}")
+            return {'error': f'云台控制指令解析失败: {str(e)}'}
+    
+    def _handle_gimbal_command(self, gimbal_command: Dict[str, Any], username: str):
+        """
+        处理云台控制指令
+        
+        Args:
+            gimbal_command: 云台控制参数
+            username: 发送用户
+        """
+        try:
+            # 检查是否有错误
+            if 'error' in gimbal_command:
+                logger.warning(f"云台控制指令错误: {gimbal_command['error']}")
+                # 可以在这里广播错误消息给聊天室
+                return
+            
+            ang_x = gimbal_command['ang_x']
+            ang_y = gimbal_command['ang_y']
+            
+            # 获取MQTT服务实例
+            mqtt_service = get_mqtt_service()
+            
+            # 使用MQTT服务的专用方法发送云台控制指令
+            success = mqtt_service.send_gimbal_command_from_chat(ang_x, ang_y, username)
+            
+            if not success:
+                logger.warning(f"发送云台控制指令失败: X={ang_x}, Y={ang_y} (用户: {username})")
+                
+                # 广播错误消息
+                from services.broadcast_manager import get_broadcast_manager
+                broadcast_manager = get_broadcast_manager()
+                broadcast_manager.broadcast_system_notification(
+                    f"⚠️ 云台控制失败: {username} 无法设置 X={ang_x}, Y={ang_y}",
+                    room="main"
+                )
+                
+        except Exception as e:
+            logger.error(f"处理云台控制指令异常: {e}")
     
     def _handle_ai_mention(self, message: Message) -> Optional[Message]:
         """处理AI提及"""
