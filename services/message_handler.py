@@ -67,7 +67,13 @@ class MessageHandler:
                 }
             
             # 验证用户
-            user_validation = self._validate_user(username, session_id)
+            if session_id and session_id.startswith('url_'):
+                # URL用户只验证用户名格式，不验证在线状态
+                user_validation = self._validate_username_format(username)
+            else:
+                # 普通用户进行完整验证
+                user_validation = self._validate_user(username, session_id)
+            
             if not user_validation['valid']:
                 self.stats['invalid_messages_rejected'] += 1
                 return {
@@ -181,10 +187,23 @@ class MessageHandler:
         
         return {'valid': True, 'error': None}
     
-    def _validate_user(self, username: str, session_id: str = None) -> Dict[str, Any]:
-        """验证用户"""
+    def _validate_username_format(self, username: str) -> Dict[str, Any]:
+        """验证用户名格式（仅格式验证，不检查在线状态）"""
         if not username:
             return {'valid': False, 'error': '用户名不能为空'}
+        
+        # 使用User模型的用户名验证
+        if not User.is_valid_username(username):
+            return {'valid': False, 'error': '用户名格式无效：只能包含中文、英文、数字、下划线，且不能是纯数字'}
+        
+        return {'valid': True, 'error': None}
+    
+    def _validate_user(self, username: str, session_id: str = None) -> Dict[str, Any]:
+        """验证用户（完整验证包括格式和在线状态）"""
+        # 先验证格式
+        format_validation = self._validate_username_format(username)
+        if not format_validation['valid']:
+            return format_validation
         
         # 检查用户是否在线
         if not self.user_manager.is_user_online_by_username(username):

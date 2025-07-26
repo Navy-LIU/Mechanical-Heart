@@ -11,6 +11,10 @@ from dotenv import load_dotenv
 
 from services.websocket_handler import WebSocketHandler
 from services.broadcast_manager import SocketIOBroadcastAdapter
+from services.mqtt_service import get_mqtt_service, start_mqtt_service, stop_mqtt_service
+from services.message_handler import get_message_handler
+import urllib.parse
+import uuid
 
 # 加载环境变量
 load_dotenv()
@@ -39,6 +43,22 @@ socketio = SocketIO(
 broadcast_adapter = SocketIOBroadcastAdapter(socketio)
 websocket_handler = WebSocketHandler(broadcast_adapter=broadcast_adapter)
 
+# MQTT配置
+mqtt_enabled = os.getenv('MQTT_ENABLE', 'false').lower() == 'true'
+mqtt_broker = os.getenv('MQTT_BROKER', 'localhost')
+mqtt_port = int(os.getenv('MQTT_PORT', 1883))
+
+# 启动MQTT服务（如果启用）
+if mqtt_enabled:
+    logger.info(f"正在启动MQTT服务: {mqtt_broker}:{mqtt_port}")
+    mqtt_success = start_mqtt_service(mqtt_broker, mqtt_port)
+    if mqtt_success:
+        logger.info("MQTT服务启动成功")
+    else:
+        logger.warning("MQTT服务启动失败，将继续运行但不支持MQTT功能")
+else:
+    logger.info("MQTT服务已禁用")
+
 @app.route('/')
 def index():
     """聊天室主页面"""
@@ -52,6 +72,263 @@ def health_check():
         'service': 'ai-chat-room',
         'version': '1.0.0'
     }
+
+@app.route('/quick-send')
+def quick_send_get():
+    """
+    URL快速发送消息 (GET)
+    参数:
+        username: 用户名
+        message: 消息内容
+    示例: /quick-send?username=test&message=hello
+    """
+    try:
+        # 获取参数
+        username = request.args.get('username', '').strip()
+        message = request.args.get('message', '').strip()
+        
+        if not username or not message:
+            return {
+                'success': False,
+                'error': '缺少参数: username 和 message 都是必需的',
+                'usage': '/quick-send?username=用户名&message=消息内容'
+            }, 400
+        
+        # URL解码
+        username = urllib.parse.unquote(username)
+        message = urllib.parse.unquote(message)
+        
+        # 验证参数
+        if len(username) > 20:
+            return {'success': False, 'error': '用户名不能超过20个字符'}, 400
+        
+        if len(message) > 1000:
+            return {'success': False, 'error': '消息内容不能超过1000个字符'}, 400
+        
+        # 处理消息
+        result = _process_url_message(username, message)
+        
+        return {
+            'success': result['success'],
+            'message': result['message'],
+            'timestamp': datetime.now().isoformat(),
+            'user_info': result.get('user_info'),
+            'ai_response': result.get('ai_response')
+        }
+        
+    except Exception as e:
+        logger.error(f"URL快速发送异常: {e}")
+        return {
+            'success': False,
+            'error': f'服务器错误: {str(e)}'
+        }, 500
+
+@app.route('/quick-send', methods=['POST'])
+def quick_send_post():
+    """
+    URL快速发送消息 (POST)
+    JSON参数:
+        {
+            "username": "用户名",
+            "message": "消息内容",
+            "display_name": "显示名称" (可选)
+        }
+    """
+    try:
+        data = request.get_json()
+        if not data:
+            return {
+                'success': False,
+                'error': '请提供JSON数据'
+            }, 400
+        
+        username = data.get('username', '').strip()
+        message = data.get('message', '').strip()
+        display_name = data.get('display_name', '').strip()
+        
+        if not username or not message:
+            return {
+                'success': False,
+                'error': 'username 和 message 字段都是必需的'
+            }, 400
+        
+        # 验证参数
+        if len(username) > 20:
+            return {'success': False, 'error': '用户名不能超过20个字符'}, 400
+        
+        if len(message) > 1000:
+            return {'success': False, 'error': '消息内容不能超过1000个字符'}, 400
+        
+        # 处理消息
+        result = _process_url_message(username, message, display_name)
+        
+        return {
+            'success': result['success'],
+            'message': result['message'],
+            'timestamp': datetime.now().isoformat(),
+            'user_info': result.get('user_info'),
+            'ai_response': result.get('ai_response')
+        }
+        
+    except Exception as e:
+        logger.error(f"URL快速发送异常: {e}")
+        return {
+            'success': False,
+            'error': f'服务器错误: {str(e)}'
+        }, 500
+
+def _process_url_message(username: str, message: str, display_name: str = None) -> dict:
+    """
+    处理URL消息发送
+    
+    Args:
+        username: 用户名
+        message: 消息内容
+        display_name: 显示名称
+    
+    Returns:
+        处理结果
+    """
+    try:
+        # 生成临时会话
+        session_id = f"url_{str(uuid.uuid4())[:8]}"
+        
+        # 获取消息处理器
+        message_handler = get_message_handler()
+        
+        # 添加URL标识
+        final_username = f"{username} (URL)"
+        
+        # 处理消息
+        result = message_handler.process_message(
+            message_content=message,
+            username=final_username,
+            session_id=session_id
+        )
+        
+        if result['success']:
+            # 广播消息到所有客户端
+            websocket_handler.broadcast_manager.broadcast_message(
+                message=result['message'],
+                ai_response=result['ai_response'],
+                room="main"
+            )
+            
+            # 发送到MQTT服务（如果可用）
+            try:
+                mqtt_service = get_mqtt_service()
+                if mqtt_service.is_connected:
+                    mqtt_service.send_message_to_mqtt(result['message'], result['ai_response'])
+            except Exception as e:
+                logger.warning(f"MQTT发送失败: {e}")
+            
+            return {
+                'success': True,
+                'message': '消息发送成功',
+                'user_info': {
+                    'username': final_username,
+                    'display_name': display_name or username,
+                    'session_id': session_id,
+                    'message_id': result['message'].id
+                },
+                'ai_response': result['ai_response'].to_dict() if result['ai_response'] else None
+            }
+        else:
+            return {
+                'success': False,
+                'message': result['error']
+            }
+    
+    except Exception as e:
+        logger.error(f"处理URL消息异常: {e}")
+        return {
+            'success': False,
+            'message': f'处理消息失败: {str(e)}'
+        }
+
+@app.route('/mqtt/status')
+def mqtt_status():
+    """获取MQTT服务状态"""
+    try:
+        mqtt_service = get_mqtt_service()
+        stats = mqtt_service.get_statistics()
+        
+        return {
+            'success': True,
+            'mqtt_status': stats,
+            'timestamp': datetime.now().isoformat()
+        }
+    
+    except Exception as e:
+        logger.error(f"获取MQTT状态异常: {e}")
+        return {
+            'success': False,
+            'error': f'获取MQTT状态失败: {str(e)}'
+        }, 500
+
+@app.route('/api/docs')
+def api_docs():
+    """
+API文档
+    """
+    docs = {
+        'service': 'AI聊天室 API',
+        'version': '1.0.0',
+        'endpoints': {
+            'quick_send_get': {
+                'method': 'GET',
+                'url': '/quick-send?username=用户名&message=消息内容',
+                'description': '通过URL参数快速发送消息',
+                'parameters': {
+                    'username': '用户名（必需，最多20个字符）',
+                    'message': '消息内容（必需，最多1000个字符）'
+                },
+                'example': '/quick-send?username=测试用户&message=你好世界'
+            },
+            'quick_send_post': {
+                'method': 'POST',
+                'url': '/quick-send',
+                'description': '通过JSON数据快速发送消息',
+                'content_type': 'application/json',
+                'body': {
+                    'username': '用户名（必需）',
+                    'message': '消息内容（必需）',
+                    'display_name': '显示名称（可选）'
+                }
+            },
+            'mqtt_status': {
+                'method': 'GET',
+                'url': '/mqtt/status',
+                'description': '获取MQTT服务状态'
+            },
+            'health': {
+                'method': 'GET',
+                'url': '/health',
+                'description': '服务健康检查'
+            }
+        },
+        'mqtt_info': {
+            'description': 'MQTT服务支持',
+            'broker': '默认localhost:1883',
+            'topics': {
+                'chatroom/messages/in': '发送消息到聊天室',
+                'chatroom/messages/out': '从聊天室接收消息',
+                'chatroom/users/join': '用户加入通知',
+                'chatroom/users/leave': '用户离开通知',
+                'chatroom/system': '系统消息'
+            },
+            'message_format': {
+                'type': 'JSON',
+                'chat_message': {
+                    'username': '用户名',
+                    'message': '消息内容',
+                    'client_id': 'MQTT客户端ID'
+                }
+            }
+        }
+    }
+    
+    return docs
 
 # WebSocket事件处理
 @socketio.on('connect')
@@ -356,6 +633,8 @@ if __name__ == '__main__':
     
     logger.info(f"启动AI聊天室服务器...")
     logger.info(f"访问地址: http://localhost:{port}")
+    logger.info(f"URL快速发送: http://localhost:{port}/quick-send?username=用户名&message=消息")
+    logger.info(f"API文档: http://localhost:{port}/api/docs")
     logger.info(f"调试模式: {debug_mode}")
     
     try:
@@ -369,7 +648,15 @@ if __name__ == '__main__':
             allow_unsafe_werkzeug=True
         )
     except KeyboardInterrupt:
+        logger.info("正在停止服务器...")
+        # 停止MQTT服务
+        if mqtt_enabled:
+            stop_mqtt_service()
+            logger.info("MQTT服务已停止")
         logger.info("服务器已停止")
     except Exception as e:
         logger.error(f"服务器启动失败: {e}")
+        # 停止MQTT服务
+        if mqtt_enabled:
+            stop_mqtt_service()
         raise
