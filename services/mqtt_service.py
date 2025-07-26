@@ -55,7 +55,8 @@ class MQTTService:
             'chat_out': 'chatroom/messages/out',    # 发送消息主题
             'user_join': 'chatroom/users/join',     # 用户加入主题
             'user_leave': 'chatroom/users/leave',   # 用户离开主题
-            'system': 'chatroom/system'             # 系统消息主题
+            'system': 'chatroom/system',            # 系统消息主题
+            'gimbal_control': 'device/gimbal/control'  # 云台控制主题
         }
         
         # 统计信息
@@ -143,7 +144,7 @@ class MQTTService:
             
             # 订阅相关主题
             for topic_name, topic in self.topics.items():
-                if topic_name in ['chat_in', 'user_join', 'user_leave']:
+                if topic_name in ['chat_in', 'user_join', 'user_leave', 'gimbal_control']:
                     client.subscribe(topic)
                     logger.info(f"订阅主题: {topic}")
             
@@ -183,6 +184,8 @@ class MQTTService:
                 self._handle_mqtt_user_join(msg_data)
             elif topic == self.topics['user_leave']:
                 self._handle_mqtt_user_leave_msg(msg_data)
+            elif topic == self.topics['gimbal_control']:
+                self._handle_gimbal_control(payload)
             
         except Exception as e:
             logger.error(f"处理MQTT消息异常: {e}")
@@ -286,6 +289,54 @@ class MQTTService:
         client_id = msg_data.get('client_id', 'unknown')
         self._handle_mqtt_user_leave(client_id)
     
+    def _handle_gimbal_control(self, payload: str):
+        """
+        处理云台控制消息
+        消息格式: "Ang_X=xxx,Ang_Y=yyy"
+        X范围: 1024-3048
+        Y范围: 1850-2400
+        
+        Args:
+            payload: MQTT消息内容
+        """
+        try:
+            logger.info(f"收到云台控制消息: {payload}")
+            
+            # 解析消息格式
+            if not self._validate_gimbal_message_format(payload):
+                logger.error(f"云台控制消息格式错误: {payload}")
+                self._publish_system_message(f"云台控制消息格式错误: {payload}")
+                return
+            
+            # 提取X和Y值
+            ang_x, ang_y = self._parse_gimbal_angles(payload)
+            
+            # 验证参数范围
+            if not self._validate_gimbal_angles(ang_x, ang_y):
+                logger.error(f"云台控制参数超出范围: X={ang_x}, Y={ang_y}")
+                self._publish_system_message(f"云台控制参数超出范围: X={ang_x}(应在1024-3048), Y={ang_y}(应在1850-2400)")
+                return
+            
+            # 处理云台控制命令
+            success = self._execute_gimbal_control(ang_x, ang_y)
+            
+            if success:
+                logger.info(f"云台控制成功: X={ang_x}, Y={ang_y}")
+                self._publish_system_message(f"云台已调整至: X={ang_x}, Y={ang_y}")
+                
+                # 广播云台控制信息到聊天室
+                self.broadcast_manager.broadcast_system_notification(
+                    f"云台控制: X={ang_x}, Y={ang_y}",
+                    room="main"
+                )
+            else:
+                logger.error(f"云台控制失败: X={ang_x}, Y={ang_y}")
+                self._publish_system_message(f"云台控制失败: X={ang_x}, Y={ang_y}")
+                
+        except Exception as e:
+            logger.error(f"处理云台控制消息异常: {e}")
+            self._publish_system_message(f"云台控制异常: {str(e)}")
+    
     def _ensure_mqtt_user_exists(self, client_id: str, username: str):
         """确保MQTT用户存在"""
         if client_id not in self.mqtt_users:
@@ -357,6 +408,91 @@ class MQTTService:
         except Exception as e:
             logger.error(f"发布系统消息异常: {e}")
     
+    def _validate_gimbal_message_format(self, payload: str) -> bool:
+        """
+        验证云台控制消息格式
+        期望格式: "Ang_X=xxx,Ang_Y=yyy"
+        
+        Args:
+            payload: 消息内容
+            
+        Returns:
+            格式是否正确
+        """
+        import re
+        
+        # 使用正则表达式验证格式
+        pattern = r'^Ang_X=\d+,Ang_Y=\d+$'
+        return bool(re.match(pattern, payload.strip()))
+    
+    def _parse_gimbal_angles(self, payload: str) -> tuple:
+        """
+        解析云台角度参数
+        
+        Args:
+            payload: 消息内容
+            
+        Returns:
+            (ang_x, ang_y) 元组
+        """
+        parts = payload.strip().split(',')
+        
+        # 解析X值
+        x_part = parts[0].split('=')[1]
+        ang_x = int(x_part)
+        
+        # 解析Y值
+        y_part = parts[1].split('=')[1]
+        ang_y = int(y_part)
+        
+        return ang_x, ang_y
+    
+    def _validate_gimbal_angles(self, ang_x: int, ang_y: int) -> bool:
+        """
+        验证云台角度参数范围
+        X范围: 1024-3048
+        Y范围: 1850-2400
+        
+        Args:
+            ang_x: X轴角度
+            ang_y: Y轴角度
+            
+        Returns:
+            参数是否在合法范围内
+        """
+        x_valid = 1024 <= ang_x <= 3048
+        y_valid = 1850 <= ang_y <= 2400
+        
+        return x_valid and y_valid
+    
+    def _execute_gimbal_control(self, ang_x: int, ang_y: int) -> bool:
+        """
+        执行云台控制命令
+        这里可以集成实际的云台控制逻辑
+        
+        Args:
+            ang_x: X轴角度
+            ang_y: Y轴角度
+            
+        Returns:
+            控制是否成功
+        """
+        try:
+            # TODO: 这里可以添加实际的云台控制逻辑
+            # 例如: 调用云台硬件API、发送串口命令等
+            
+            logger.info(f"模拟云台控制: 设置X={ang_x}, Y={ang_y}")
+            
+            # 模拟控制延迟
+            import time
+            time.sleep(0.1)
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"执行云台控制异常: {e}")
+            return False
+    
     def get_statistics(self) -> Dict[str, Any]:
         """获取MQTT服务统计信息"""
         return {
@@ -369,7 +505,8 @@ class MQTTService:
             'connect_time': self.stats['connect_time'].isoformat() if self.stats['connect_time'] else None,
             'last_message_time': self.stats['last_message_time'].isoformat() if self.stats['last_message_time'] else None,
             'active_topics': list(self.topics.values()),
-            'mqtt_users': list(self.mqtt_users.values())
+            'mqtt_users': list(self.mqtt_users.values()),
+            'gimbal_control_topic': self.topics['gimbal_control']
         }
     
     def send_message_to_mqtt(self, message, ai_response=None):

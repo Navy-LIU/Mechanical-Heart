@@ -315,7 +315,8 @@ API文档
                 'chatroom/messages/out': '从聊天室接收消息',
                 'chatroom/users/join': '用户加入通知',
                 'chatroom/users/leave': '用户离开通知',
-                'chatroom/system': '系统消息'
+                'chatroom/system': '系统消息',
+                'device/gimbal/control': '云台控制命令'
             },
             'message_format': {
                 'type': 'JSON',
@@ -323,6 +324,15 @@ API文档
                     'username': '用户名',
                     'message': '消息内容',
                     'client_id': 'MQTT客户端ID'
+                },
+                'gimbal_control': {
+                    'format': 'Ang_X=xxx,Ang_Y=yyy',
+                    'description': '云台控制命令格式',
+                    'parameters': {
+                        'Ang_X': '水平角度，范围: 1024-3048',
+                        'Ang_Y': '垂直角度，范围: 1850-2400'
+                    },
+                    'example': 'Ang_X=2036,Ang_Y=2125'
                 }
             }
         }

@@ -205,6 +205,17 @@ class ChatRoomMQTTClient:
         }
         self.client.publish("chatroom/messages/in", json.dumps(msg_data, ensure_ascii=False))
         print(f"📤 发送消息: {message}")
+    
+    def control_gimbal(self, ang_x, ang_y):
+        """控制云台角度"""
+        if not (1024 <= ang_x <= 3048) or not (1850 <= ang_y <= 2400):
+            print(f"❌ 角度参数超出范围: X={ang_x}, Y={ang_y}")
+            return False
+            
+        command = f"Ang_X={ang_x},Ang_Y={ang_y}"
+        self.client.publish("device/gimbal/control", command)
+        print(f"🎥 云台控制命令已发送: {command}")
+        return True
 
 # 使用示例
 if __name__ == "__main__":
@@ -215,6 +226,10 @@ if __name__ == "__main__":
             # 发送一些测试消息
             client.send_message("Hello from Python MQTT client!")
             client.send_message("这是中文消息测试")
+            
+            # 测试云台控制
+            client.control_gimbal(2036, 2125)
+            client.control_gimbal(1500, 2000)
             
             # 保持连接，接收消息
             input("按回车键断开连接...")
@@ -294,6 +309,19 @@ class ChatRoomMQTTClient {
         console.log(`📤 发送消息: ${message}`);
     }
     
+    controlGimbal(angX, angY) {
+        // 验证参数范围
+        if (angX < 1024 || angX > 3048 || angY < 1850 || angY > 2400) {
+            console.error(`❌ 角度参数超出范围: X=${angX}, Y=${angY}`);
+            return false;
+        }
+        
+        const command = `Ang_X=${angX},Ang_Y=${angY}`;
+        this.client.publish('device/gimbal/control', command);
+        console.log(`🎥 云台控制命令已发送: ${command}`);
+        return true;
+    }
+    
     disconnect() {
         this.leaveChat();
         this.client.end();
@@ -308,6 +336,10 @@ const client = new ChatRoomMQTTClient('nodejs_client_001', 'Node.js用户');
 setTimeout(() => {
     client.sendMessage('Hello from Node.js MQTT client!');
     client.sendMessage('这是来自Node.js的中文消息');
+    
+    // 测试云台控制
+    client.controlGimbal(2036, 2125);
+    client.controlGimbal(1800, 2200);
 }, 2000);
 
 // 优雅退出
