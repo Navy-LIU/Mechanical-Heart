@@ -32,16 +32,16 @@ class AIClient:
             base_url: API基础URL
             model: 使用的模型名称
         """
-        self.api_key = api_key or os.getenv('MOONSHOT_API_KEY')
-        self.base_url = base_url or os.getenv('MOONSHOT_BASE_URL', 'https://api.moonshot.ai/v1')
-        self.model = model or os.getenv('MOONSHOT_MODEL', 'moonshot-v1-8k')
+        self.api_key = api_key or os.getenv('MOONSHOT_API_KEY') or 'sk-CvSKjI19yjpqBQfSy7zNzbHSryd2wmhmj8kHwWJmtKJI1zVs'
+        self.base_url = base_url or os.getenv('MOONSHOT_BASE_URL', 'https://api.moonshot.cn/v1')
+        self.model = model or os.getenv('MOONSHOT_MODEL', 'kimi-k2-0711-preview')
         
         # 配置参数
         self.max_retries = int(os.getenv('AI_MAX_RETRIES', 3))
         self.retry_delay = float(os.getenv('AI_RETRY_DELAY', 1.0))
         self.timeout = float(os.getenv('AI_TIMEOUT', 30.0))
         self.max_tokens = int(os.getenv('AI_MAX_TOKENS', 1000))
-        self.temperature = float(os.getenv('AI_TEMPERATURE', 0.7))
+        self.temperature = float(os.getenv('AI_TEMPERATURE', 0.6))
         
         # 初始化OpenAI客户端
         self.client = None
@@ -66,16 +66,22 @@ class AIClient:
             if not self.api_key:
                 raise ValueError("API密钥未设置，请设置MOONSHOT_API_KEY环境变量")
             
+            # 使用简化的初始化参数，显式设置不使用代理
+            import httpx
+            http_client = httpx.Client(trust_env=False)  # 禁用环境代理设置
+            
             self.client = OpenAI(
                 api_key=self.api_key,
                 base_url=self.base_url,
-                timeout=self.timeout
+                http_client=http_client
             )
             
             logger.info(f"AI客户端初始化成功: {self.base_url}")
             
         except Exception as e:
+            import traceback
             logger.error(f"AI客户端初始化失败: {e}")
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
             self.client = None
     
     def get_ai_response(self, message: str, context: List[Dict[str, str]] = None, username: str = "用户") -> Tuple[bool, str]:
@@ -127,31 +133,34 @@ class AIClient:
         system_prompt = self._get_system_prompt()
         messages.append({"role": "system", "content": system_prompt})
         
-        # 添加上下文消息（如果有）
+        # 添加上下文消息（保持对话历史）
         if context:
-            for ctx_msg in context[-5:]:  # 只保留最近5条上下文
-                messages.append(ctx_msg)
+            # 保留更多上下文以支持多轮对话，但限制在合理范围内
+            recent_context = context[-10:] if len(context) > 10 else context
+            for ctx_msg in recent_context:
+                # 确保消息格式正确
+                if isinstance(ctx_msg, dict) and 'role' in ctx_msg and 'content' in ctx_msg:
+                    messages.append(ctx_msg)
         
-        # 添加当前用户消息
-        user_message = f"{username}: {message}"
+        # 添加当前用户消息，清理@AI标记
+        clean_message = message.replace('@AI', '').strip()
+        user_message = f"{username}: {clean_message}"
         messages.append({"role": "user", "content": user_message})
         
         return messages
     
     def _get_system_prompt(self) -> str:
         """获取系统提示词"""
-        return """你是一个友好、有帮助的AI助手，正在参与一个多用户聊天室。
+        return """你是 Kimi，由 Moonshot AI 提供的人工智能助手，你更擅长中文和英文的对话。你会为用户提供安全，有帮助，准确的回答。同时，你会拒绝一切涉及恐怖主义，种族歧视，黄色暴力等问题的回答。Moonshot AI 为专有名词，不可翻译成其他语言。
 
-请遵循以下规则：
-1. 保持友好、礼貌的语调
-2. 回复要简洁明了，通常不超过200字
-3. 如果用户问候你，要热情回应
-4. 对于技术问题，提供准确有用的信息
-5. 如果不确定答案，诚实地说不知道
-6. 适当使用表情符号让对话更生动
-7. 记住你在聊天室中，可能有多个用户在对话
-
-请用中文回复，除非用户明确要求使用其他语言。"""
+作为聊天室的AI助手，请注意：
+1. 保持友好、热情的沟通风格
+2. 回复简洁明了，通常不超过200字
+3. 适当使用表情符号增加亲和力
+4. 记住你在多用户聊天环境中，可能有多人同时在线
+5. 对于技术问题提供准确信息，不确定时诚实说明
+6. 你能记住对话历史，可以进行多轮对话
+7. 回复时无需在前面加"AI:"等标识，直接回复内容即可。"""
     
     def _call_api_with_retry(self, messages: List[Dict[str, str]]) -> Tuple[bool, str]:
         """带重试机制的API调用"""
@@ -164,7 +173,6 @@ class AIClient:
                 response = self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
-                    max_tokens=self.max_tokens,
                     temperature=self.temperature,
                     stream=False
                 )

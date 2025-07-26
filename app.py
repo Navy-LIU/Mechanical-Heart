@@ -4,6 +4,7 @@ AI聊天室主应用入口
 """
 import os
 import logging
+from datetime import datetime
 from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit, disconnect
 from dotenv import load_dotenv
@@ -29,14 +30,14 @@ app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-pro
 socketio = SocketIO(
     app, 
     cors_allowed_origins="*",
-    logger=True,
-    engineio_logger=True,
-    async_mode='eventlet'
+    logger=False,
+    engineio_logger=False,
+    async_mode='threading'
 )
 
 # 创建WebSocket处理器和广播适配器
-websocket_handler = WebSocketHandler()
 broadcast_adapter = SocketIOBroadcastAdapter(socketio)
+websocket_handler = WebSocketHandler(broadcast_adapter=broadcast_adapter)
 
 @app.route('/')
 def index():
@@ -149,32 +150,134 @@ def handle_get_connection_stats():
         logger.error(f"获取连接统计异常: {request.sid}, {e}")
         emit('connection_stats_error', {'error': '获取统计信息失败'})
 
+# 聊天室相关事件处理
+@socketio.on('join_room')
+def handle_join_room(data):
+    """处理用户加入聊天室"""
+    try:
+        logger.info(f"用户请求加入聊天室: {request.sid}, data: {data}")
+        
+        result = websocket_handler.handle_join_room(request.sid, data)
+        
+        if result['success']:
+            # 发送成功响应给当前用户
+            emit('join_room_success', {
+                'message': result['message'],
+                'user': result['user'],
+                'session_id': result['session_id'],
+                'chat_history': result['chat_history'],
+                'online_users': result['online_users'],
+                'server_time': result['server_time']
+            })
+            
+            logger.info(f"用户加入聊天室成功: {result['user']['username']}")
+        else:
+            # 发送错误响应
+            emit('join_room_error', {'error': result['error']})
+            logger.warning(f"用户加入聊天室失败: {request.sid}, {result['error']}")
+            
+    except Exception as e:
+        logger.error(f"加入聊天室处理异常: {request.sid}, {e}")
+        emit('join_room_error', {'error': '加入聊天室时发生服务器错误'})
+
+@socketio.on('send_message')
+def handle_send_message(data):
+    """处理发送消息"""
+    try:
+        logger.info(f"收到消息: {request.sid}, data: {data}")
+        
+        result = websocket_handler.handle_send_message(request.sid, data)
+        
+        if result['success']:
+            # 发送成功确认给发送者
+            emit('message_sent', {
+                'message': result['message'],
+                'message_data': result['message_data'],
+                'ai_response': result['ai_response']
+            })
+            
+            logger.info(f"消息发送成功: {request.sid}")
+        else:
+            # 发送错误响应
+            emit('message_error', {'error': result['error']})
+            logger.warning(f"消息发送失败: {request.sid}, {result['error']}")
+            
+    except Exception as e:
+        logger.error(f"发送消息处理异常: {request.sid}, {e}")
+        emit('message_error', {'error': '发送消息时发生服务器错误'})
+
+@socketio.on('get_chat_history')
+def handle_get_chat_history(data):
+    """获取聊天历史"""
+    try:
+        limit = data.get('limit', 50) if data else 50
+        
+        # 获取聊天历史
+        from services.chat_history import get_chat_history
+        chat_history = get_chat_history()
+        recent_messages = chat_history.get_recent_messages(limit=limit)
+        
+        history_data = []
+        for msg in recent_messages:
+            history_data.append({
+                'type': 'message',
+                'username': msg.username,
+                'content': msg.content,
+                'timestamp': msg.timestamp.isoformat(),
+                'is_ai': msg.message_type == 'ai',
+                'is_system': msg.message_type == 'system',
+                'message_id': msg.id
+            })
+        
+        emit('chat_history', {
+            'messages': history_data,
+            'total_count': len(history_data)
+        })
+        
+    except Exception as e:
+        logger.error(f"获取聊天历史异常: {request.sid}, {e}")
+        emit('chat_history_error', {'error': '获取聊天历史失败'})
+
+@socketio.on('get_online_users')
+def handle_get_online_users():
+    """获取在线用户列表"""
+    try:
+        online_users = websocket_handler.user_manager.get_online_users()
+        total_users = websocket_handler.user_manager.get_online_user_count()
+        
+        emit('online_users', {
+            'users': online_users,
+            'total_users': total_users,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"获取在线用户异常: {request.sid}, {e}")
+        emit('online_users_error', {'error': '获取在线用户失败'})
+
 @socketio.on_error_default
 def default_error_handler(e):
     """默认错误处理器"""
     logger.error(f"WebSocket错误: {request.sid}, {e}")
     
-    # 记录错误到WebSocket处理器
-    websocket_handler.handle_error(request.sid, str(e))
-    
     # 发送错误通知给客户端
     emit('error', {
         'message': '发生了一个错误',
         'error_id': request.sid,
-        'timestamp': websocket_handler._get_current_time()
+        'timestamp': datetime.now().isoformat()
     })
 
-# 错误处理
+# HTTP错误处理
 @app.errorhandler(404)
 def not_found(error):
     """404错误处理"""
-    return render_template('404.html'), 404
+    return {'error': '页面未找到'}, 404
 
 @app.errorhandler(500)
 def internal_error(error):
     """500错误处理"""
     logger.error(f"内部服务器错误: {error}")
-    return render_template('500.html'), 500
+    return {'error': '内部服务器错误'}, 500
 
 if __name__ == '__main__':
     # 开发环境配置
