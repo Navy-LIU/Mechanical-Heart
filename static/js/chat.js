@@ -3,6 +3,8 @@ class ChatClient {
     constructor() {
         this.socket = null;
         this.username = '';
+        this.userId = null;
+        this.displayName = '';
         this.isConnected = false;
         this.isJoining = false;
         this.isSending = false;
@@ -220,6 +222,7 @@ class ChatClient {
         
         this.hideUsernameError();
         this.username = username;
+        this.displayName = username; // 初始显示名称与用户名相同
         this.isJoining = true;
         this.joinBtn.disabled = true;
         this.joinBtn.textContent = '加入中...';
@@ -239,11 +242,29 @@ class ChatClient {
         });
         
         // 连接成功
-        this.socket.on('connect', () => {
-            console.log('连接到服务器');
+        this.socket.on('connect', (data) => {
+            console.log('连接到服务器', data);
             this.isConnected = true;
             this.updateConnectionStatus('connected');
-            this.socket.emit('join_room', { username: this.username });
+            
+            // 获取服务器分配的用户ID
+            if (data && data.user_id) {
+                this.userId = data.user_id;
+                console.log('获得用户ID:', this.userId);
+            }
+        });
+        
+        // 连接成功确认
+        this.socket.on('connect_success', (data) => {
+            console.log('连接确认:', data);
+            if (data.user_id) {
+                this.userId = data.user_id;
+            }
+            // 现在加入聊天室
+            this.socket.emit('join_room', { 
+                username: this.username,
+                display_name: this.username // 初始显示名称与用户名相同
+            });
         });
         
         // 连接断开
@@ -280,7 +301,12 @@ class ChatClient {
         this.socket.on('join_room_success', (data) => {
             this.isJoining = false;
             this.hideUsernameModal();
-            this.showNotification(`欢迎 ${data.user.username} 加入聊天室！`, 'success', 3000);
+            
+            // 更新用户信息
+            this.userId = data.user.user_id;
+            this.displayName = data.user.display_name || data.user.username;
+            
+            this.showNotification(`欢迎 ${this.displayName} 加入聊天室！您的ID是: ${this.userId}`, 'success', 5000);
             this.messageInput.focus();
             this.updateCharCounter();
             
@@ -322,6 +348,41 @@ class ChatClient {
             this.addMessage(data);
         });
         
+        // 接收广播消息（包括自己发送的消息）
+        this.socket.on('broadcast_message', (data) => {
+            this.hideNoMessages();
+            
+            // 处理不同类型的广播消息
+            switch(data.type) {
+                case 'new_message':
+                    this.addMessage(data.message);
+                    break;
+                case 'message_with_ai_response':
+                    this.addMessage(data.message);
+                    if (data.ai_response) {
+                        this.hideAiThinking();
+                        // 稍微延迟显示AI回复，让用户消息先显示
+                        setTimeout(() => {
+                            this.addMessage(data.ai_response);
+                        }, 300);
+                    }
+                    break;
+                case 'user_join':
+                    this.addSystemMessage(data.message);
+                    break;
+                case 'user_leave':
+                    this.addSystemMessage(data.message);
+                    break;
+                case 'users_update':
+                    this.updateUsersList(data.users);
+                    this.onlineCount.textContent = data.user_count;
+                    break;
+                case 'system_notification':
+                    this.showNotification(data.message, data.level || 'info');
+                    break;
+            }
+        });
+        
         // AI开始思考
         this.socket.on('ai_thinking', (data) => {
             this.showAiThinking();
@@ -334,10 +395,43 @@ class ChatClient {
             this.addMessage(data);
         });
         
+        // 消息发送成功确认
+        this.socket.on('message_sent', (data) => {
+            // 消息发送成功后，等待通过broadcast_message接收
+            console.log('消息发送确认:', data);
+        });
+        
+        // 消息发送失败
+        this.socket.on('message_error', (data) => {
+            this.showNotification('消息发送失败: ' + data.error, 'error');
+        });
+        
         // 用户列表更新
         this.socket.on('users_update', (data) => {
             this.updateUsersList(data.users);
             this.onlineCount.textContent = data.count;
+        });
+        
+        // 更新显示名称成功
+        this.socket.on('update_display_name_success', (data) => {
+            this.displayName = data.new_display_name;
+            this.showNotification(data.message, 'success');
+            console.log('显示名称更新成功:', data);
+        });
+        
+        // 更新显示名称失败
+        this.socket.on('update_display_name_error', (data) => {
+            this.showNotification('更新显示名称失败: ' + data.error, 'error');
+        });
+        
+        // 用户信息响应
+        this.socket.on('user_info', (data) => {
+            this.showUserInfo(data.user);
+        });
+        
+        // 用户信息错误
+        this.socket.on('user_info_error', (data) => {
+            this.showNotification('获取用户信息失败: ' + data.error, 'error');
         });
         
         // 系统通知
@@ -719,6 +813,51 @@ class ChatClient {
         }
         
         document.body.removeChild(textArea);
+    }
+    
+    // 更新显示名称
+    updateDisplayName(newDisplayName) {
+        if (!this.isConnected) {
+            this.showNotification('未连接到服务器', 'warning');
+            return;
+        }
+        
+        if (!newDisplayName || newDisplayName.trim().length === 0) {
+            this.showNotification('显示名称不能为空', 'warning');
+            return;
+        }
+        
+        const displayName = newDisplayName.trim();
+        if (displayName.length > 20) {
+            this.showNotification('显示名称不能超过20个字符', 'warning');
+            return;
+        }
+        
+        this.socket.emit('update_display_name', { display_name: displayName });
+    }
+    
+    // 获取用户信息
+    getUserInfo() {
+        if (!this.isConnected) {
+            this.showNotification('未连接到服务器', 'warning');
+            return;
+        }
+        
+        this.socket.emit('get_user_info');
+    }
+    
+    // 显示用户信息
+    showUserInfo(userInfo) {
+        const info = [
+            `用户ID: ${userInfo.user_id || '未知'}`,
+            `用户名: ${userInfo.username || '未知'}`,
+            `显示名称: ${userInfo.display_name || '未知'}`,
+            `加入时间: ${this.formatTime(userInfo.join_time)}`,
+            `在线时长: ${Math.floor((userInfo.online_duration || 0) / 60)}分钟`,
+            `IP地址: ${userInfo.ip_address || '未知'}`
+        ].join('\n');
+        
+        alert('用户信息:\n' + info);
     }
     
     // 工具方法：格式化时间

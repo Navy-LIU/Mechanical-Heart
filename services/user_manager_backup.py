@@ -5,9 +5,6 @@
 from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime
 import logging
-import uuid
-import hashlib
-from collections import deque
 
 from models.user import User, create_user
 from models.chat_room import get_chat_room
@@ -25,68 +22,8 @@ class UserManager:
         self.chat_room = get_chat_room()
         self._session_to_socket = {}  # session_id -> socket_id 映射
         self._socket_to_session = {}  # socket_id -> session_id 映射
-        self._user_ids = set()  # 已分配的用户ID集合
-        self._ip_users = {}  # ip_address -> [用户列表] 映射
-        self._user_history = deque(maxlen=30)  # 最近30个用户历史记录
-        self.MAX_USERS = 30  # 最大用户数量
     
-    def generate_user_id(self, ip_address: str = None) -> str:
-        """
-        生成唯一的用户ID
-        
-        Args:
-            ip_address: 用户IP地址，用于生成更友好的ID
-            
-        Returns:
-            唯一的用户ID
-        """
-        # 生成基于IP和时间的短编码
-        if ip_address:
-            # 使用IP地址的最后两段和时间戳
-            ip_parts = ip_address.split('.')
-            ip_suffix = ''.join(ip_parts[-2:]) if len(ip_parts) >= 2 else ip_address[-4:]
-        else:
-            ip_suffix = 'xxxx'
-        
-        # 生成唯一ID直到找到未使用的
-        attempt = 0
-        while attempt < 1000:  # 防止无限循环
-            timestamp_suffix = str(int(datetime.now().timestamp() * 1000))[-6:]  # 6位时间戳
-            user_id = f"u{ip_suffix}{timestamp_suffix}{attempt:02d}"
-            
-            if user_id not in self._user_ids:
-                self._user_ids.add(user_id)
-                return user_id
-            attempt += 1
-        
-        # 如果无法生成唯一ID，使用UUID
-        fallback_id = f"u{str(uuid.uuid4())[:8]}"
-        self._user_ids.add(fallback_id)
-        return fallback_id
-    
-    def add_user_to_ip_mapping(self, user: User) -> None:
-        """将用户添加到IP映射中"""
-        if user.ip_address:
-            if user.ip_address not in self._ip_users:
-                self._ip_users[user.ip_address] = []
-            self._ip_users[user.ip_address].append(user)
-    
-    def remove_user_from_ip_mapping(self, user: User) -> None:
-        """从IP映射中移除用户"""
-        if user.ip_address and user.ip_address in self._ip_users:
-            try:
-                self._ip_users[user.ip_address].remove(user)
-                if not self._ip_users[user.ip_address]:
-                    del self._ip_users[user.ip_address]
-            except ValueError:
-                pass  # 用户不在列表中
-    
-    def get_users_by_ip(self, ip_address: str) -> List[User]:
-        """获取指定IP下的所有用户"""
-        return self._ip_users.get(ip_address, [])
-    
-    def add_user(self, session_id: str, username: str, socket_id: str = None, 
-                 ip_address: str = None, display_name: str = None) -> Tuple[bool, str, Optional[User]]:
+    def add_user(self, session_id: str, username: str, socket_id: str = None) -> Tuple[bool, str, Optional[User]]:
         """
         添加用户到聊天室
         
@@ -94,8 +31,6 @@ class UserManager:
             session_id: 会话ID
             username: 用户名
             socket_id: Socket连接ID（可选）
-            ip_address: IP地址（可选）
-            display_name: 显示名称（可选）
             
         Returns:
             (成功标志, 消息, 用户对象)
@@ -122,17 +57,8 @@ class UserManager:
             if not self._can_add_more_users():
                 return False, "聊天室已满", None
             
-            # 生成唯一用户ID
-            user_id = self.generate_user_id(ip_address)
-            
             # 创建用户
-            user = create_user(
-                session_id=session_id, 
-                username=username, 
-                user_id=user_id,
-                ip_address=ip_address,
-                display_name=display_name
-            )
+            user = create_user(session_id, username)
             
             # 添加到聊天室
             if self.chat_room.add_user(user):
@@ -141,23 +67,9 @@ class UserManager:
                     self._session_to_socket[session_id] = socket_id
                     self._socket_to_session[socket_id] = session_id
                 
-                # 添加到IP映射
-                self.add_user_to_ip_mapping(user)
-                
-                # 添加到用户历史
-                self._user_history.append({
-                    'user_id': user.user_id,
-                    'username': user.username,
-                    'ip_address': user.ip_address,
-                    'join_time': user.join_time,
-                    'session_id': session_id
-                })
-                
-                logger.info(f"用户 {username} (ID: {user_id}, session: {session_id}, IP: {ip_address}) 加入聊天室")
-                return True, f"欢迎 {username} 加入聊天室！您的ID是: {user_id}", user
+                logger.info(f"用户 {username} (session: {session_id}) 加入聊天室")
+                return True, f"欢迎 {username} 加入聊天室！", user
             else:
-                # 如果加入失败，移除已分配的用户ID
-                self._user_ids.discard(user_id)
                 return False, "加入聊天室失败", None
                 
         except Exception as e:
@@ -195,14 +107,7 @@ class UserManager:
                 if socket_id:
                     self._socket_to_session.pop(socket_id, None)
                 
-                # 从IP映射中移除
-                self.remove_user_from_ip_mapping(removed_user)
-                
-                # 移除用户ID记录
-                if removed_user.user_id:
-                    self._user_ids.discard(removed_user.user_id)
-                
-                logger.info(f"用户 {removed_user.username} (ID: {removed_user.user_id}, session: {session_id}) 离开聊天室")
+                logger.info(f"用户 {removed_user.username} (session: {session_id}) 离开聊天室")
                 return True, f"{removed_user.username} 已离开聊天室", removed_user
             else:
                 return False, "移除用户失败", None
@@ -274,19 +179,22 @@ class UserManager:
         """根据会话ID获取Socket ID"""
         return self._session_to_socket.get(session_id)
     
-    def update_socket_mapping(self, session_id: str, new_socket_id: str) -> bool:
+    def update_socket_mapping(self, session_id: str, socket_id: str) -> bool:
         """更新Socket映射"""
         try:
-            # 移除旧映射
-            old_socket_id = self._session_to_socket.get(session_id)
-            if old_socket_id:
-                self._socket_to_session.pop(old_socket_id, None)
+            # 清理旧的映射
+            old_socket = self._session_to_socket.get(session_id)
+            if old_socket:
+                self._socket_to_session.pop(old_socket, None)
+            
+            old_session = self._socket_to_session.get(socket_id)
+            if old_session:
+                self._session_to_socket.pop(old_session, None)
             
             # 建立新映射
-            self._session_to_socket[session_id] = new_socket_id
-            self._socket_to_session[new_socket_id] = session_id
+            self._session_to_socket[session_id] = socket_id
+            self._socket_to_session[socket_id] = session_id
             
-            logger.info(f"更新Socket映射: {session_id} -> {new_socket_id}")
             return True
         except Exception as e:
             logger.error(f"更新Socket映射失败: {e}")
@@ -508,13 +416,21 @@ class UserEventHandler:
         """
         success, message, user = self.user_manager.add_user(session_id, username, socket_id)
         
-        return {
+        result = {
             'success': success,
             'message': message,
-            'user': user.to_dict() if user else None,
-            'event_type': 'user_join',
+            'user': user.to_public_dict() if user else None,
             'timestamp': datetime.now().isoformat()
         }
+        
+        if success:
+            # 添加成功后的额外信息
+            result.update({
+                'users_update': self.user_manager.broadcast_user_list_update(),
+                'welcome_message': f"欢迎 {username} 加入AI聊天室！"
+            })
+        
+        return result
     
     def handle_user_leave(self, session_id: str) -> Dict[str, Any]:
         """
@@ -525,33 +441,46 @@ class UserEventHandler:
         """
         success, message, user = self.user_manager.remove_user(session_id)
         
-        return {
+        result = {
             'success': success,
             'message': message,
-            'user': user.to_dict() if user else None,
-            'event_type': 'user_leave',
+            'user': user.to_public_dict() if user else None,
             'timestamp': datetime.now().isoformat()
         }
+        
+        if success:
+            # 离开成功后的额外信息
+            result.update({
+                'users_update': self.user_manager.broadcast_user_list_update(),
+                'goodbye_message': f"{user.username} 离开了聊天室"
+            })
+        
+        return result
     
-    def handle_user_reconnect(self, session_id: str, new_socket_id: str) -> Dict[str, Any]:
+    def handle_socket_disconnect(self, socket_id: str) -> Dict[str, Any]:
         """
-        处理用户重连事件
+        处理Socket断开事件
         
         Returns:
             事件处理结果
         """
-        success = self.user_manager.update_socket_mapping(session_id, new_socket_id)
-        user = self.user_manager.get_user_by_session(session_id) if success else None
+        success, message, user = self.user_manager.remove_user_by_socket(socket_id)
         
-        return {
+        # 清理Socket映射
+        self.user_manager.cleanup_socket_mapping(socket_id)
+        
+        result = {
             'success': success,
-            'message': '重连成功' if success else '重连失败',
-            'user': user.to_dict() if user else None,
-            'event_type': 'user_reconnect',
+            'message': message,
+            'user': user.to_public_dict() if user else None,
+            'socket_id': socket_id,
             'timestamp': datetime.now().isoformat()
         }
-
-
-def get_user_event_handler() -> UserEventHandler:
-    """获取用户事件处理器"""
-    return UserEventHandler(get_user_manager())
+        
+        if success:
+            result.update({
+                'users_update': self.user_manager.broadcast_user_list_update(),
+                'disconnect_message': f"{user.username} 断开连接"
+            })
+        
+        return result

@@ -81,12 +81,18 @@ class WebSocketHandler:
             
             logger.info(f"WebSocket连接建立: {socket_id}")
             
+            # 自动为新连接分配用户ID
+            user_id = self.user_manager.generate_user_id(connection_info['client_ip'])
+            connection_info['user_id'] = user_id
+            
             return {
                 'success': True,
                 'socket_id': socket_id,
+                'user_id': user_id,  # 返回新分配的用户ID
                 'server_time': current_time.isoformat(),
                 'connection_info': {
                     'socket_id': socket_id,
+                    'user_id': user_id,
                     'server_time': current_time.isoformat(),
                     'active_users': len(self.user_manager.get_online_users())
                 }
@@ -168,6 +174,7 @@ class WebSocketHandler:
         try:
             # 获取用户名
             username = data.get('username', '').strip()
+            display_name = data.get('display_name', '').strip() or username
             if not username:
                 return {
                     'success': False,
@@ -177,8 +184,23 @@ class WebSocketHandler:
             # 生成会话ID
             session_id = str(uuid.uuid4())
             
+            # 获取连接信息
+            connection_info = self._connections.get(socket_id, {})
+            user_id = connection_info.get('user_id')  # 使用预分配的用户ID
+            ip_address = connection_info.get('client_ip')
+            
             # 添加用户到聊天室
-            success, message, user = self.user_manager.add_user(session_id, username, socket_id)
+            success, message, user = self.user_manager.add_user(
+                session_id=session_id,
+                username=username, 
+                socket_id=socket_id,
+                ip_address=ip_address,
+                display_name=display_name
+            )
+            
+            # 如果用户对象没有用户ID，使用预分配的
+            if user and not user.user_id and user_id:
+                user.user_id = user_id
             
             if not success:
                 return {

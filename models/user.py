@@ -15,9 +15,15 @@ class User:
     username: str
     join_time: datetime
     is_ai: bool = False
+    user_id: str = None  # 自动分配的唯一用户ID
+    ip_address: str = None  # 用户IP地址
+    display_name: str = None  # 用户自定义显示名称
     
     def __post_init__(self):
         """初始化后验证"""
+        # 如果没有设置display_name，使用username
+        if self.display_name is None:
+            self.display_name = self.username
         self.validate()
     
     def validate(self) -> None:
@@ -64,15 +70,20 @@ class User:
         """转换为字典格式"""
         return {
             'session_id': self.session_id,
+            'user_id': self.user_id,
             'username': self.username,
+            'display_name': self.display_name,
             'join_time': self.join_time.isoformat(),
-            'is_ai': self.is_ai
+            'is_ai': self.is_ai,
+            'ip_address': self.ip_address
         }
     
     def to_public_dict(self) -> Dict[str, Any]:
         """转换为公开信息字典（不包含敏感信息）"""
         return {
+            'user_id': self.user_id,
             'username': self.username,
+            'display_name': self.display_name,
             'is_ai': self.is_ai,
             'join_time': self.join_time.isoformat()
         }
@@ -85,9 +96,10 @@ class User:
     
     def get_display_name(self) -> str:
         """获取显示名称"""
+        display = self.display_name or self.username
         if self.is_ai:
-            return f"{self.username} (AI)"
-        return self.username
+            return f"{display} (AI)"
+        return display
     
     def __str__(self) -> str:
         """字符串表示"""
@@ -141,13 +153,17 @@ class AIUser(User):
         return True
 
 
-def create_user(session_id: str, username: str) -> User:
+def create_user(session_id: str, username: str, user_id: str = None, 
+               ip_address: str = None, display_name: str = None) -> User:
     """创建普通用户的工厂函数"""
     return User(
         session_id=session_id,
         username=username,
         join_time=datetime.now(),
-        is_ai=False
+        is_ai=False,
+        user_id=user_id,
+        ip_address=ip_address,
+        display_name=display_name
     )
 
 

@@ -255,6 +255,75 @@ def handle_get_online_users():
         logger.error(f"获取在线用户异常: {request.sid}, {e}")
         emit('online_users_error', {'error': '获取在线用户失败'})
 
+@socketio.on('update_display_name')
+def handle_update_display_name(data):
+    """处理更新用户显示名称"""
+    try:
+        logger.info(f"用户请求更新显示名称: {request.sid}, data: {data}")
+        
+        # 获取用户信息
+        user = websocket_handler.user_manager.get_user_by_socket(request.sid)
+        if not user:
+            emit('update_display_name_error', {'error': '用户未找到，请重新加入聊天室'})
+            return
+        
+        new_display_name = data.get('display_name', '').strip()
+        if not new_display_name:
+            emit('update_display_name_error', {'error': '显示名称不能为空'})
+            return
+        
+        # 更新显示名称
+        success, message = websocket_handler.user_manager.update_user_display_name(
+            user.session_id, new_display_name
+        )
+        
+        if success:
+            # 发送成功响应
+            emit('update_display_name_success', {
+                'message': message,
+                'new_display_name': new_display_name,
+                'user_info': user.to_dict()
+            })
+            
+            # 广播用户列表更新
+            from services.broadcast_manager import get_broadcast_manager
+            broadcast_manager = get_broadcast_manager()
+            broadcast_manager.broadcast_user_list_update(
+                users=websocket_handler.user_manager.get_online_users(),
+                user_count=websocket_handler.user_manager.get_online_user_count(),
+                room="main"
+            )
+            
+            logger.info(f"用户显示名称更新成功: {user.username} -> {new_display_name}")
+        else:
+            emit('update_display_name_error', {'error': message})
+            logger.warning(f"显示名称更新失败: {request.sid}, {message}")
+            
+    except Exception as e:
+        logger.error(f"更新显示名称异常: {request.sid}, {e}")
+        emit('update_display_name_error', {'error': '更新显示名称时发生服务器错误'})
+
+@socketio.on('get_user_info')
+def handle_get_user_info():
+    """获取当前用户信息"""
+    try:
+        user = websocket_handler.user_manager.get_user_by_socket(request.sid)
+        if not user:
+            emit('user_info_error', {'error': '用户未找到'})
+            return
+        
+        # 获取详细用户信息
+        user_info = websocket_handler.user_manager.get_user_display_info(user.session_id)
+        
+        emit('user_info', {
+            'user': user_info,
+            'timestamp': datetime.now().isoformat()
+        })
+        
+    except Exception as e:
+        logger.error(f"获取用户信息异常: {request.sid}, {e}")
+        emit('user_info_error', {'error': '获取用户信息失败'})
+
 @socketio.on_error_default
 def default_error_handler(e):
     """默认错误处理器"""

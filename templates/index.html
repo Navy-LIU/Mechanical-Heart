@@ -20,6 +20,11 @@
                         <span id="connection-status">连接中...</span>
                     </div>
                     <div class="online-count">在线: <span id="online-count">0</span></div>
+                    <!-- 用户功能按钮 -->
+                    <div class="user-actions" style="margin-left: 10px;">
+                        <button id="user-info-btn" onclick="chatClient.getUserInfo()" title="查看用户信息" style="background: none; border: none; color: #007bff; cursor: pointer; font-size: 12px;">信息</button>
+                        <button id="change-name-btn" onclick="changeDisplayName()" title="修改显示名称" style="background: none; border: none; color: #28a745; cursor: pointer; font-size: 12px; margin-left: 5px;">改名</button>
+                    </div>
                 </div>
             </header>
 
@@ -100,5 +105,51 @@
     <!-- Socket.IO客户端库 -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
     <script src="{{ url_for('static', filename='js/chat.js') }}"></script>
+    
+    <script>
+        // 修改显示名称函数
+        function changeDisplayName() {
+            if (!window.chatClient || !window.chatClient.isConnected) {
+                alert('请先加入聊天室');
+                return;
+            }
+            
+            const newName = prompt('请输入新的显示名称:', window.chatClient.displayName || window.chatClient.username);
+            if (newName && newName.trim()) {
+                window.chatClient.updateDisplayName(newName.trim());
+            }
+        }
+        
+        // 测试功能 - 发送测试消息
+        function sendTestMessage() {
+            if (window.chatClient && window.chatClient.isConnected) {
+                window.chatClient.messageInput.value = '这是一条测试消息';
+                window.chatClient.sendMessage();
+            }
+        }
+        
+        // 测试AI对话
+        function testAIChat() {
+            if (window.chatClient && window.chatClient.isConnected) {
+                window.chatClient.messageInput.value = '@AI 你好，这是一个测试消息';
+                window.chatClient.sendMessage();
+            }
+        }
+        
+        // 键盘快捷键
+        document.addEventListener('keydown', function(e) {
+            // Ctrl+I - 查看用户信息
+            if (e.ctrlKey && e.key === 'i' && window.chatClient && window.chatClient.isConnected) {
+                e.preventDefault();
+                window.chatClient.getUserInfo();
+            }
+            
+            // Ctrl+R - 修改显示名称
+            if (e.ctrlKey && e.key === 'r' && window.chatClient && window.chatClient.isConnected) {
+                e.preventDefault();
+                changeDisplayName();
+            }
+        });
+    </script>
 </body>
 </html>
